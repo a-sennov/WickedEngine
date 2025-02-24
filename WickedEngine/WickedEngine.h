@@ -77,7 +77,11 @@
 #include "wiTrailRenderer.h"
 
 #ifdef PLATFORM_WINDOWS_DESKTOP
-#pragma comment(lib,"WickedEngine_Windows.lib")
+#  ifdef _DEBUG
+#    pragma comment(lib,"WickedEngine_Windows_Debug.lib")
+#  else
+#    pragma comment(lib,"WickedEngine_Windows_Release.lib")
+#  endif
 #endif // PLATFORM_WINDOWS_DESKTOP
 
 #ifdef PLATFORM_XBOX
