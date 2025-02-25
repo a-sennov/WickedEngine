@@ -48,13 +48,13 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <IntDir>$(SolutionDir)..\build\$(ProjectName)\$(Platform)\$(Configuration)\</IntDir>
-    <OutDir>$(SolutionDir)..\..\lib\$(Platform)\</OutDir>
+    <OutDir>$(SolutionDir)..\..\lib</OutDir>
     <MultiProcFXC>true</MultiProcFXC>
     <TargetName>$(ProjectName)_$(Configuration)</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <IntDir>$(SolutionDir)..\build\$(ProjectName)\$(Platform)\$(Configuration)\</IntDir>
-    <OutDir>$(SolutionDir)..\..\lib\$(Platform)\</OutDir>
+    <OutDir>$(SolutionDir)..\..\lib</OutDir>
     <MultiProcFXC>true</MultiProcFXC>
     <TargetName>$(ProjectName)_$(Configuration)</TargetName>
   </PropertyGroup>
