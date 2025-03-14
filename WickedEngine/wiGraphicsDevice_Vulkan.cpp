@@ -3681,6 +3681,12 @@ using namespace vulkan_internal;
 	}
 	bool GraphicsDevice_Vulkan::CreateBuffer2(const GPUBufferDesc* desc, const std::function<void(void*)>& init_callback, GPUBuffer* buffer, const GPUResource* alias, uint64_t alias_offset) const
 	{
+#ifdef PLATFORM_LINUX
+		// Resource aliasing on Linux sometimes fails with VK_ERROR_UNKOWN so I disable it:
+		alias = nullptr;
+		alias_offset = 0;
+#endif // PLATFORM_LINUX
+
 		auto internal_state = std::make_shared<Buffer_Vulkan>();
 		internal_state->allocationhandler = allocationhandler;
 		buffer->internal_state = internal_state;
@@ -4010,6 +4016,12 @@ using namespace vulkan_internal;
 	}
 	bool GraphicsDevice_Vulkan::CreateTexture(const TextureDesc* desc, const SubresourceData* initial_data, Texture* texture, const GPUResource* alias, uint64_t alias_offset) const
 	{
+#ifdef PLATFORM_LINUX
+		// Resource aliasing on Linux sometimes fails with VK_ERROR_UNKOWN so I disable it:
+		alias = nullptr;
+		alias_offset = 0;
+#endif // PLATFORM_LINUX
+
 		auto internal_state = std::make_shared<Texture_Vulkan>();
 		internal_state->allocationhandler = allocationhandler;
 		internal_state->defaultLayout = _ConvertImageLayout(desc->layout);
@@ -4064,11 +4076,13 @@ using namespace vulkan_internal;
 		{
 			imageInfo.usage |= VK_IMAGE_USAGE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR;
 		}
+#ifndef PLATFORM_LINUX
 		if (has_flag(texture->desc.misc_flags, ResourceMiscFlag::TRANSIENT_ATTACHMENT))
 		{
 			imageInfo.usage |= VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
 		}
 		else
+#endif // PLATFORM_LINUX
 		{
 			imageInfo.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 			imageInfo.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -7085,7 +7099,7 @@ using namespace vulkan_internal;
 				vulkan_check(vkEndCommandBuffer(commandlist.GetCommandBuffer()));
 
 				CommandQueue& queue = queues[commandlist.queue];
-				const bool dependency = !commandlist.signals.empty() || !commandlist.waits.empty() || !commandlist.wait_queues.empty();
+				const bool dependency = !commandlist.signals.empty() || !commandlist.waits.empty();
 
 				if (dependency)
 				{
@@ -7121,23 +7135,6 @@ using namespace vulkan_internal;
 
 				if (dependency)
 				{
-					for (auto& wait : commandlist.wait_queues)
-					{
-						CommandQueue& waitqueue = queues[wait.first];
-						VkSemaphore semaphore = wait.second;
-
-						// The WaitQueue operation will submit and signal the specified dependency queue:
-						waitqueue.signal(semaphore); // signal recorded, will be executed at submit
-						waitqueue.submit(this, VK_NULL_HANDLE);
-
-						// The current queue will be waiting for the dependency queue to complete:
-						queue.wait(semaphore);
-
-						// recycle semaphore
-						free_semaphore(semaphore);
-					}
-					commandlist.wait_queues.clear();
-
 					for (auto& semaphore : commandlist.waits)
 					{
 						// Wait for command list dependency:
@@ -7190,15 +7187,17 @@ using namespace vulkan_internal;
 		if (FRAMECOUNT >= BUFFERCOUNT)
 		{
 			const uint32_t bufferindex = GetBufferIndex();
+			VkFence fences[QUEUE_COUNT] = {};
+			uint32_t fenceCount = 0;
 			for (int queue = 0; queue < QUEUE_COUNT; ++queue)
 			{
 				if (frame_fence[bufferindex][queue] == VK_NULL_HANDLE)
 					continue;
-
-				vulkan_check(vkWaitForFences(device, 1, &frame_fence[bufferindex][queue], VK_TRUE, 0xFFFFFFFFFFFFFFFF));
-
-				vulkan_check(vkResetFences(device, 1, &frame_fence[bufferindex][queue]));
+				fences[fenceCount++] = frame_fence[bufferindex][queue];
 			}
+
+			vulkan_check(vkWaitForFences(device, fenceCount, fences, VK_TRUE, ~0ull));
+			vulkan_check(vkResetFences(device, fenceCount, fences));
 		}
 
 		allocationhandler->Update(FRAMECOUNT, BUFFERCOUNT);
@@ -7500,7 +7499,7 @@ using namespace vulkan_internal;
 			}
 			CommandQueue& q = queues[queue];
 			std::scoped_lock lock(*q.locker);
-			wilog_assert(q.sparse_binding_supported, "Vulkan QUEUE_TYPE=%d doesn't report sparse binding support!", int(queue));
+			wilog_assert(q.sparse_binding_supported, "Vulkan QUEUE_TYPE=%d doesn't report sparse binding support! This can result in broken rendering or crash. Try to update the graphics driver if this happens.", int(queue));
 
 			vulkan_check(vkQueueBindSparse(q.queue, (uint32_t)sparse_infos.size(), sparse_infos.data(), VK_NULL_HANDLE));
 		}
@@ -7514,11 +7513,6 @@ using namespace vulkan_internal;
 		VkSemaphore semaphore = new_semaphore();
 		commandlist.waits.push_back(semaphore);
 		commandlist_wait_for.signals.push_back(semaphore);
-	}
-	void GraphicsDevice_Vulkan::WaitQueue(CommandList cmd, QUEUE_TYPE wait_for)
-	{
-		CommandList_Vulkan& commandlist = GetCommandList(cmd);
-		commandlist.wait_queues.push_back(std::make_pair(wait_for, new_semaphore()));
 	}
 	void GraphicsDevice_Vulkan::RenderPassBegin(const SwapChain* swapchain, CommandList cmd)
 	{
@@ -7686,7 +7680,11 @@ using namespace vulkan_internal;
 				storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 				break;
 			case RenderPassImage::StoreOp::DONTCARE:
+#ifdef PLATFORM_LINUX
+				storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+#else
 				storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+#endif // PLATFORM_LINUX
 				break;
 			}
 

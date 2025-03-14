@@ -17,6 +17,8 @@
 #include "shaders/ShaderInterop_SurfelGI.h"
 #include "shaders/ShaderInterop_DDGI.h"
 
+#include <sanitizer/asan_interface.h>
+
 using namespace wi::ecs;
 using namespace wi::enums;
 using namespace wi::graphics;
@@ -545,53 +547,6 @@ namespace wi::scene
 				tex.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
 				device->CreateTexture(&tex, nullptr, &surfelgi.momentsTexture);
 				device->SetName(&surfelgi.momentsTexture, "surfelgi.momentsTexture");
-
-				tex.bind_flags = BindFlag::SHADER_RESOURCE;
-				tex.misc_flags = ResourceMiscFlag::SPARSE;
-				tex.format = Format::BC6H_UF16;
-				tex.width = SURFEL_MOMENT_ATLAS_TEXELS;
-				tex.height = SURFEL_MOMENT_ATLAS_TEXELS;
-				tex.width = std::max(256u, tex.width);		// force non-packed mip behaviour
-				tex.height = std::max(256u, tex.height);	// force non-packed mip behaviour
-				device->CreateTexture(&tex, nullptr, &surfelgi.irradianceTexture);
-				device->SetName(&surfelgi.irradianceTexture, "surfelgi.irradianceTexture");
-
-				tex.bind_flags = BindFlag::UNORDERED_ACCESS | BindFlag::SHADER_RESOURCE;
-				tex.misc_flags = ResourceMiscFlag::SPARSE;
-				tex.width = SURFEL_MOMENT_ATLAS_TEXELS / 4;
-				tex.height = SURFEL_MOMENT_ATLAS_TEXELS / 4;
-				tex.format = Format::R32G32B32A32_UINT;
-				tex.layout = ResourceState::UNORDERED_ACCESS;
-				device->CreateTexture(&tex, nullptr, &surfelgi.irradianceTexture_rw);
-				device->SetName(&surfelgi.irradianceTexture_rw, "surfelgi.irradianceTexture_rw");
-
-				buf = {};
-				buf.alignment = surfelgi.irradianceTexture.sparse_page_size;
-				buf.size = surfelgi.irradianceTexture.sparse_properties->total_tile_count * buf.alignment * 2;
-				buf.misc_flags = ResourceMiscFlag::SPARSE_TILE_POOL_TEXTURE_NON_RT_DS;
-				device->CreateBuffer(&buf, nullptr, &surfelgi.sparse_tile_pool);
-
-				SparseUpdateCommand commands[2];
-				commands[0].sparse_resource = &surfelgi.irradianceTexture;
-				commands[0].tile_pool = &surfelgi.sparse_tile_pool;
-				commands[0].num_resource_regions = 1;
-				uint32_t tile_count = surfelgi.irradianceTexture_rw.sparse_properties->total_tile_count;
-				uint32_t tile_offset[2] = { 0, tile_count };
-				SparseRegionSize region;
-				region.width = (tex.width + surfelgi.irradianceTexture_rw.sparse_properties->tile_width - 1) / surfelgi.irradianceTexture_rw.sparse_properties->tile_width;
-				region.height = (tex.height + surfelgi.irradianceTexture_rw.sparse_properties->tile_height - 1) / surfelgi.irradianceTexture_rw.sparse_properties->tile_height;
-				SparseResourceCoordinate coordinate;
-				coordinate.x = 0;
-				coordinate.y = 0;
-				TileRangeFlags flags = TileRangeFlags::None;
-				commands[0].sizes = &region;
-				commands[0].coordinates = &coordinate;
-				commands[0].range_flags = &flags;
-				commands[0].range_tile_counts = &tile_count;
-				commands[0].range_start_offsets = &tile_offset[0];
-				commands[1] = commands[0];
-				commands[1].sparse_resource = &surfelgi.irradianceTexture_rw;
-				device->SparseUpdate(QUEUE_GRAPHICS, commands, arraysize(commands));
 			}
 			std::swap(surfelgi.aliveBuffer[0], surfelgi.aliveBuffer[1]);
 		}
@@ -603,117 +558,90 @@ namespace wi::scene
 		if (wi::renderer::GetDDGIEnabled())
 		{
 			ddgi.frame_index++;
-			if (!ddgi.color_texture_rw.IsValid()) // Check the _rw texture here because that is invalid with serialized DDGI data, and we can detect if dynamic resources need recreation when serialized is loaded
+			if (!TLAS.IsValid() && !BVH.IsValid())
+			{
+				ddgi.frame_index = 0;
+			}
+			if (!ddgi.ray_buffer.IsValid()) // Check the ray_buffer here because that is invalid with serialized DDGI data, and we can detect if dynamic resources need recreation when serialized is loaded
 			{
 				ddgi.frame_index = 0;
 
 				const uint32_t probe_count = ddgi.grid_dimensions.x * ddgi.grid_dimensions.y * ddgi.grid_dimensions.z;
+
+				wi::vector<uint8_t> zerodata;
 
 				GPUBufferDesc buf;
 				buf.stride = sizeof(DDGIRayDataPacked);
 				buf.size = buf.stride * probe_count * DDGI_MAX_RAYCOUNT;
 				buf.bind_flags = BindFlag::UNORDERED_ACCESS | BindFlag::SHADER_RESOURCE;
 				buf.misc_flags = ResourceMiscFlag::BUFFER_STRUCTURED;
-				device->CreateBuffer(&buf, nullptr, &ddgi.ray_buffer);
+				zerodata.resize(buf.size);
+				device->CreateBuffer(&buf, zerodata.data(), &ddgi.ray_buffer);
 				device->SetName(&ddgi.ray_buffer, "ddgi.ray_buffer");
 
 				buf.stride = sizeof(DDGIVarianceDataPacked);
 				buf.size = buf.stride * probe_count * DDGI_COLOR_RESOLUTION * DDGI_COLOR_RESOLUTION;
 				buf.misc_flags = ResourceMiscFlag::BUFFER_STRUCTURED;
-				device->CreateBuffer(&buf, nullptr, &ddgi.variance_buffer);
+				zerodata.resize(buf.size);
+				device->CreateBuffer(&buf, zerodata.data(), &ddgi.variance_buffer);
 				device->SetName(&ddgi.variance_buffer, "ddgi.variance_buffer");
 
 				buf.stride = sizeof(uint8_t);
 				buf.size = buf.stride * probe_count;
 				buf.misc_flags = ResourceMiscFlag::NONE;
 				buf.format = Format::R8_UINT;
-				device->CreateBuffer(&buf, nullptr, &ddgi.raycount_buffer);
+				zerodata.resize(buf.size);
+				device->CreateBuffer(&buf, zerodata.data(), &ddgi.raycount_buffer);
 				device->SetName(&ddgi.raycount_buffer, "ddgi.raycount_buffer");
 
 				buf.stride = sizeof(uint32_t);
 				buf.size = buf.stride * (probe_count * DDGI_MAX_RAYCOUNT + 4); // +4: counter/indirect dispatch args
-				buf.misc_flags = ResourceMiscFlag::BUFFER_STRUCTURED;
+				buf.misc_flags = ResourceMiscFlag::BUFFER_STRUCTURED | ResourceMiscFlag::INDIRECT_ARGS;
 				buf.format = Format::UNKNOWN;
-				device->CreateBuffer(&buf, nullptr, &ddgi.rayallocation_buffer);
+				zerodata.resize(buf.size);
+				device->CreateBuffer(&buf, zerodata.data(), &ddgi.rayallocation_buffer);
 				device->SetName(&ddgi.rayallocation_buffer, "ddgi.rayallocation_buffer");
 
+				buf.stride = sizeof(DDGIProbe);
+				buf.size = buf.stride * probe_count;
+				buf.misc_flags = ResourceMiscFlag::BUFFER_STRUCTURED;
+				buf.format = Format::UNKNOWN;
+				zerodata.resize(buf.size);
+				device->CreateBuffer(&buf, zerodata.data(), &ddgi.probe_buffer);
+				device->SetName(&ddgi.probe_buffer, "ddgi.probe_buffer");
+
 				TextureDesc tex;
-				tex.width = DDGI_COLOR_TEXELS * ddgi.grid_dimensions.x * ddgi.grid_dimensions.y;
-				tex.height = DDGI_COLOR_TEXELS * ddgi.grid_dimensions.z;
-				tex.format = Format::BC6H_UF16;
-				tex.misc_flags = ResourceMiscFlag::SPARSE; // sparse aliasing to write BC6H_UF16 as uint
-				tex.width = std::max(256u, tex.width);		// force non-packed mip behaviour
-				tex.height = std::max(256u, tex.height);	// force non-packed mip behaviour
-				tex.bind_flags = BindFlag::SHADER_RESOURCE;
-				tex.layout = ResourceState::SHADER_RESOURCE;
-				device->CreateTexture(&tex, nullptr, &ddgi.color_texture);
-				device->SetName(&ddgi.color_texture, "ddgi.color_texture");
-
-				tex.format = Format::R32G32B32A32_UINT; // packed BC6H_UF16
-				tex.width /= 4;
-				tex.height /= 4;
-				tex.bind_flags = BindFlag::UNORDERED_ACCESS;
-				tex.layout = ResourceState::UNORDERED_ACCESS;
-				device->CreateTexture(&tex, nullptr, &ddgi.color_texture_rw);
-				device->SetName(&ddgi.color_texture_rw, "ddgi.color_texture_rw");
-
-				buf = {};
-				buf.alignment = ddgi.color_texture_rw.sparse_page_size;
-				buf.size = ddgi.color_texture_rw.sparse_properties->total_tile_count * buf.alignment * 2;
-				buf.misc_flags = ResourceMiscFlag::SPARSE_TILE_POOL_TEXTURE_NON_RT_DS;
-				device->CreateBuffer(&buf, nullptr, &ddgi.sparse_tile_pool);
-
-				SparseUpdateCommand commands[2];
-				commands[0].sparse_resource = &ddgi.color_texture;
-				commands[0].tile_pool = &ddgi.sparse_tile_pool;
-				commands[0].num_resource_regions = 1;
-				uint32_t tile_count = ddgi.color_texture_rw.sparse_properties->total_tile_count;
-				uint32_t tile_offset[2] = { 0, tile_count };
-				SparseRegionSize region;
-				region.width = (tex.width + ddgi.color_texture_rw.sparse_properties->tile_width - 1) / ddgi.color_texture_rw.sparse_properties->tile_width;
-				region.height = (tex.height + ddgi.color_texture_rw.sparse_properties->tile_height - 1) / ddgi.color_texture_rw.sparse_properties->tile_height;
-				SparseResourceCoordinate coordinate;
-				coordinate.x = 0;
-				coordinate.y = 0;
-				TileRangeFlags flags = TileRangeFlags::None;
-				commands[0].sizes = &region;
-				commands[0].coordinates = &coordinate;
-				commands[0].range_flags = &flags;
-				commands[0].range_tile_counts = &tile_count;
-				commands[0].range_start_offsets = &tile_offset[0];
-				commands[1] = commands[0];
-				commands[1].sparse_resource = &ddgi.color_texture_rw;
-				device->SparseUpdate(QUEUE_GRAPHICS, commands, arraysize(commands));
-
 				tex.width = DDGI_DEPTH_TEXELS * ddgi.grid_dimensions.x * ddgi.grid_dimensions.y;
 				tex.height = DDGI_DEPTH_TEXELS * ddgi.grid_dimensions.z;
 				tex.format = Format::R16G16_FLOAT;
 				tex.misc_flags = {};
 				tex.bind_flags = BindFlag::UNORDERED_ACCESS | BindFlag::SHADER_RESOURCE;
 				tex.layout = ResourceState::SHADER_RESOURCE;
-				device->CreateTexture(&tex, nullptr, &ddgi.depth_texture);
+				zerodata.resize(ComputeTextureMemorySizeInBytes(tex));
+				SubresourceData initdata;
+				initdata.data_ptr = zerodata.data();
+				initdata.row_pitch = tex.width * GetFormatStride(tex.format);
+				device->CreateTexture(&tex, &initdata, &ddgi.depth_texture);
 				device->SetName(&ddgi.depth_texture, "ddgi.depth_texture");
-
-				tex.type = TextureDesc::Type::TEXTURE_3D;
-				tex.width = ddgi.grid_dimensions.x;
-				tex.height = ddgi.grid_dimensions.z;
-				tex.depth = ddgi.grid_dimensions.y;
-				tex.format = Format::R10G10B10A2_UNORM;
-				tex.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
-				tex.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
-				device->CreateTexture(&tex, nullptr, &ddgi.offset_texture);
-				device->SetName(&ddgi.offset_texture, "ddgi.offset_texture");
 			}
-			ddgi.grid_min = bounds.getMin();
-			ddgi.grid_min.x -= 1;
-			ddgi.grid_min.y -= 1;
-			ddgi.grid_min.z -= 1;
-			ddgi.grid_max = bounds.getMax();
-			ddgi.grid_max.x += 1;
-			ddgi.grid_max.y += 1;
-			ddgi.grid_max.z += 1;
+			float3 grid_min = bounds.getMin();
+			grid_min.x -= 1;
+			grid_min.y -= 1;
+			grid_min.z -= 1;
+			float3 grid_max = bounds.getMax();
+			grid_max.x += 1;
+			grid_max.y += 1;
+			grid_max.z += 1;
+			float bounds_blend = 0.01f;
+			const float area = AABB(ddgi.grid_min, ddgi.grid_max).getArea();
+			if (ddgi.frame_index == 0 || area < 0.001f)
+			{
+				bounds_blend = 1;
+			}
+			ddgi.grid_min = wi::math::Lerp(ddgi.grid_min, grid_min, bounds_blend);
+			ddgi.grid_max = wi::math::Lerp(ddgi.grid_max, grid_max, bounds_blend);
 		}
-		else if (ddgi.color_texture_rw.IsValid()) // if color_texture_rw is valid, it means DDGI was not from serialization, so it will be deleted when DDGI is disabled
+		else if (ddgi.ray_buffer.IsValid()) // if ray_buffer is valid, it means DDGI was not from serialization, so it will be deleted when DDGI is disabled
 		{
 			ddgi = {};
 		}
@@ -983,13 +911,10 @@ namespace wi::scene
 
 		shaderscene.ddgi.grid_dimensions = ddgi.grid_dimensions;
 		shaderscene.ddgi.probe_count = ddgi.grid_dimensions.x * ddgi.grid_dimensions.y * ddgi.grid_dimensions.z;
-		shaderscene.ddgi.color_texture_resolution = uint2(ddgi.color_texture.desc.width, ddgi.color_texture.desc.height);
-		shaderscene.ddgi.color_texture_resolution_rcp = float2(1.0f / shaderscene.ddgi.color_texture_resolution.x, 1.0f / shaderscene.ddgi.color_texture_resolution.y);
+		shaderscene.ddgi.probe_buffer = device->GetDescriptorIndex(&ddgi.probe_buffer, SubresourceType::SRV);
 		shaderscene.ddgi.depth_texture_resolution = uint2(ddgi.depth_texture.desc.width, ddgi.depth_texture.desc.height);
 		shaderscene.ddgi.depth_texture_resolution_rcp = float2(1.0f / shaderscene.ddgi.depth_texture_resolution.x, 1.0f / shaderscene.ddgi.depth_texture_resolution.y);
-		shaderscene.ddgi.color_texture = device->GetDescriptorIndex(&ddgi.color_texture, SubresourceType::SRV);
 		shaderscene.ddgi.depth_texture = device->GetDescriptorIndex(&ddgi.depth_texture, SubresourceType::SRV);
-		shaderscene.ddgi.offset_texture = device->GetDescriptorIndex(&ddgi.offset_texture, SubresourceType::SRV);
 		shaderscene.ddgi.grid_min = ddgi.grid_min;
 		shaderscene.ddgi.grid_extents.x = abs(ddgi.grid_max.x - ddgi.grid_min.x);
 		shaderscene.ddgi.grid_extents.y = abs(ddgi.grid_max.y - ddgi.grid_min.y);
@@ -1076,7 +1001,7 @@ namespace wi::scene
 
 		bounds = AABB::Merge(bounds, other.bounds);
 
-		if (!ddgi.color_texture.IsValid() && other.ddgi.color_texture.IsValid())
+		if (!ddgi.probe_buffer.IsValid() && other.ddgi.probe_buffer.IsValid())
 		{
 			ddgi = std::move(other.ddgi);
 		}
@@ -1092,12 +1017,14 @@ namespace wi::scene
 		// Recount colliders:
 		collider_allocator_cpu.store(0u);
 		collider_allocator_gpu.store(0u);
-		collider_deinterleaved_data.reserve(
+		const size_t size =
 			sizeof(wi::primitive::AABB) * colliders.GetCount() +
 			sizeof(wi::primitive::AABB) * colliders.GetCount() +
 			sizeof(ColliderComponent) * colliders.GetCount() +
 			sizeof(ColliderComponent) * colliders.GetCount()
-		);
+		;
+		collider_deinterleaved_data.reserve(size);
+		ASAN_UNPOISON_MEMORY_REGION(collider_deinterleaved_data.data(), size);
 		aabb_colliders_cpu = (wi::primitive::AABB*)collider_deinterleaved_data.data();
 		aabb_colliders_gpu = aabb_colliders_cpu + colliders.GetCount();
 		colliders_cpu = (ColliderComponent*)(aabb_colliders_gpu + colliders.GetCount());
@@ -3728,12 +3655,14 @@ namespace wi::scene
 		// Colliders:
 		collider_allocator_cpu.store(0u);
 		collider_allocator_gpu.store(0u);
-		collider_deinterleaved_data.reserve(
-			sizeof(wi::primitive::AABB)* colliders.GetCount() +
+		const size_t size =
+			sizeof(wi::primitive::AABB) * colliders.GetCount() +
 			sizeof(wi::primitive::AABB) * colliders.GetCount() +
 			sizeof(ColliderComponent) * colliders.GetCount() +
 			sizeof(ColliderComponent) * colliders.GetCount()
-		);
+		;
+		collider_deinterleaved_data.reserve(size);
+		ASAN_UNPOISON_MEMORY_REGION(collider_deinterleaved_data.data(), size);
 		aabb_colliders_cpu = (wi::primitive::AABB*)collider_deinterleaved_data.data();
 		aabb_colliders_gpu = aabb_colliders_cpu + colliders.GetCount();
 		colliders_cpu = (ColliderComponent*)(aabb_colliders_gpu + colliders.GetCount());
@@ -4668,10 +4597,14 @@ namespace wi::scene
 					}
 					else
 					{
-						assert(0); // unknown data format
+						wi::backlog::post("Invalid or old lightmap data found, it will be discarded. Re-render the lightmap if required.", wi::backlog::LogLevel::Warning);
+						object.lightmapTextureData.clear();
 					}
-					wi::texturehelper::CreateTexture(object.lightmap, object.lightmapTextureData.data(), object.lightmapWidth, object.lightmapHeight, object.lightmap.desc.format);
-					device->SetName(&object.lightmap, "lightmap");
+					if (object.lightmap.desc.format != Format::UNKNOWN)
+					{
+						wi::texturehelper::CreateTexture(object.lightmap, object.lightmapTextureData.data(), object.lightmapWidth, object.lightmapHeight, object.lightmap.desc.format);
+						device->SetName(&object.lightmap, "lightmap");
+					}
 				}
 
 				aabb.layerMask = layerMask;

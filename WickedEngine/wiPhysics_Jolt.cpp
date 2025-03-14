@@ -379,7 +379,6 @@ namespace wi::physics
 			XMMATRIX parentMatrix = scene.ComputeParentMatrixRecursive(entity);
 			scene.locker.unlock();
 
-			XMStoreFloat4x4(&transform.world, parentMatrix * transform.GetLocalMatrix());
 			transform.ApplyTransform();
 
 			if (mesh != nullptr && mesh->precomputed_rigidbody_physics_shape.physicsobject != nullptr)
@@ -886,6 +885,8 @@ namespace wi::physics
 			Ref<JPH::Ragdoll> ragdoll;
 			bool state_active = false;
 			float scale = 1;
+			Vec3 prev_capsule_position[BODYPART_COUNT];
+			Quat prev_capsule_rotation[BODYPART_COUNT];
 
 			Ragdoll(Scene& scene, HumanoidComponent& humanoid, Entity humanoidEntity, float scale)
 			{
@@ -2004,16 +2005,20 @@ namespace wi::physics
 							return;
 						Ragdoll& ragdoll = *(Ragdoll*)humanoid.ragdoll.get();
 						BodyInterface& body_interface = physics_scene.physics_system.GetBodyInterfaceNoLock();
+						int bodypart = 0;
 						for (auto& rb : ragdoll.rigidbodies)
 						{
 							TransformComponent* transform = scene.transforms.GetComponent(rb.entity);
 							if (transform == nullptr)
 								continue;
 							Mat44 mat = body_interface.GetWorldTransform(rb.bodyID);
+							ragdoll.prev_capsule_position[bodypart] = mat.GetTranslation();
+							ragdoll.prev_capsule_rotation[bodypart] = mat.GetQuaternion().Normalized();
 							mat = mat * rb.additionalTransformInverse;
 							mat = mat * rb.restBasis;
 							rb.prev_position = mat.GetTranslation();
 							rb.prev_rotation = mat.GetQuaternion().Normalized();
+							bodypart++;
 						}
 					});
 					wi::jobsystem::Wait(ctx);
@@ -2129,7 +2134,7 @@ namespace wi::physics
 				humanoid.ragdoll_bodyparts.resize(Ragdoll::BODYPART_COUNT);
 			}
 			humanoid.ragdoll_bounds = wi::primitive::AABB();
-			int caps = 0;
+			int bodypart = 0;
 
 			BodyInterface& body_interface = physics_scene.physics_system.GetBodyInterfaceNoLock();
 			for (auto& rb : ragdoll.rigidbodies)
@@ -2139,11 +2144,20 @@ namespace wi::physics
 					continue;
 				Mat44 mat = body_interface.GetWorldTransform(rb.bodyID);
 
-				XMFLOAT4X4 capsulemat = cast(mat);
-				XMMATRIX M = XMLoadFloat4x4(&capsulemat);
-				auto& bp = humanoid.ragdoll_bodyparts[caps++];
+				auto& bp = humanoid.ragdoll_bodyparts[bodypart];
 				bp.bone = rb.humanoid_bone;
 				bp.capsule.radius = rb.capsule.radius;
+
+				Vec3 capsule_position = mat.GetTranslation();
+				Quat capsule_rotation = mat.GetQuaternion().Normalized();
+				if (IsInterpolationEnabled() && IsSimulationEnabled())
+				{
+					capsule_position = capsule_position * physics_scene.alpha + ragdoll.prev_capsule_position[bodypart] * (1 - physics_scene.alpha);
+					capsule_rotation = ragdoll.prev_capsule_rotation[bodypart].SLERP(capsule_rotation, physics_scene.alpha);
+				}
+				Mat44 _capsulemat = Mat44::sRotationTranslation(capsule_rotation, capsule_position);
+				XMFLOAT4X4 capsulemat = cast(_capsulemat);
+				XMMATRIX M = XMLoadFloat4x4(&capsulemat);
 				XMStoreFloat3(&bp.capsule.base, XMVector3Transform(XMLoadFloat3(&rb.capsule.base), M));
 				XMStoreFloat3(&bp.capsule.tip, XMVector3Transform(XMLoadFloat3(&rb.capsule.tip), M));
 				humanoid.ragdoll_bounds = wi::primitive::AABB::Merge(humanoid.ragdoll_bounds, bp.capsule.getAABB());
@@ -2171,6 +2185,8 @@ namespace wi::physics
 					transform->rotation_local = cast(rotation);
 					transform->SetDirty();
 				}
+
+				bodypart++;
 			}
 
 #if 0
@@ -2690,6 +2706,21 @@ namespace wi::physics
 		return cast(soft_vertices[physicsIndex].mPosition);
 	}
 
+	void SetRagdollGhostMode(wi::scene::HumanoidComponent& humanoid, bool value)
+	{
+		if (humanoid.ragdoll == nullptr)
+			return;
+		Ragdoll& ragdoll = *(Ragdoll*)humanoid.ragdoll.get();
+		PhysicsScene& physics_scene = *(PhysicsScene*)ragdoll.physics_scene.get();
+		for (auto& rb : ragdoll.rigidbodies)
+		{
+			BodyLockWrite lock(physics_scene.physics_system.GetBodyLockInterface(), rb.bodyID);
+			if (!lock.Succeeded())
+				return;
+			Body& body = lock.GetBody();
+			body.SetIsSensor(value);
+		}
+	}
 
 	template <class CollectorType>
 	class WickedClosestHitCollector : public JPH::ClosestHitCollisionCollector<CollectorType>

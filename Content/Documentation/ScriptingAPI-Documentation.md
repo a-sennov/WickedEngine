@@ -154,6 +154,7 @@ You can use the Renderer with the following functions, all of which are in the g
 - SetDebugCollidersEnabled(bool value)
 - SetGridHelperEnabled(bool value)
 - SetDDGIDebugEnabled(bool value)
+- SetDDGIEnabled(bool value)
 - SetDebugCamerasEnabled(bool value)
 - SetVSyncEnabled(opt bool enabled)
 - SetOcclusionCullingEnabled(bool enabled)
@@ -1570,6 +1571,7 @@ The metadata component can store and retrieve an arbitrary amount of named user 
 	Enemy = 3,
 	NPC = 4,
 	Pickup = 5,
+	Vehicle = 6,
 }
 
 #### CharacterComponent
@@ -1741,6 +1743,7 @@ It inherits functions from RenderPath2D, so it can render a 2D overlay.
 - SetMSAASampleCount(int count)
 - SetSharpenFilterEnabled(bool value)
 - SetSharpenFilterAmount(float value)
+- SetEyeAdaptionEnabled(bool value)
 - SetExposure(float value)
 - SetHDRCalibration(float value)
 - SetOutlineEnabled(bool value)
@@ -2077,6 +2080,7 @@ Playstation button codes:
 - SetFrameRate(float value)	-- Set the frames per second resolution of physics simulation (default = 120 FPS)
 - GetFrameRate() : float
 - GetVelocity() : Vector-- returns linear velocity of a body
+- SetRagdollGhostMode(HumanoidComponent humanoid, bool value)	-- enable/disable ghost mode for a ragdoll. In ghost mode, the ragdoll will not collide with anything. Enable this if the humanoid sits inside a vehicle for example.
 - SetLinearVelocity(RigidBodyPhysicsComponent component, Vector velocity)	-- Set the linear velocity manually
 - SetAngularVelocity(RigidBodyPhysicsComponent component, Vector velocity)	-- Set the angular velocity manually
 - ApplyForce(RigidBodyPhysicsComponent component, Vector force)	-- Apply force at body center

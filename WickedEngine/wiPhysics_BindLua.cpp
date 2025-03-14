@@ -31,6 +31,7 @@ namespace wi::lua
 		lunamethod(Physics_BindLua, ActivateAllRigidBodies),
 		lunamethod(Physics_BindLua, ResetPhysicsObjects),
 		lunamethod(Physics_BindLua, GetVelocity),
+		lunamethod(Physics_BindLua, SetRagdollGhostMode),
 		lunamethod(Physics_BindLua, Intersects),
 		lunamethod(Physics_BindLua, PickDrag),
 		lunamethod(Physics_BindLua, DriveVehicle),
@@ -475,6 +476,26 @@ namespace wi::lua
 			wi::lua::SError(L, "GetVelocity(RigidBodyPhysicsComponent component) not enough arguments!");
 		return 0;
 	}
+	int Physics_BindLua::SetRagdollGhostMode(lua_State* L)
+	{
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc > 1)
+		{
+			scene::HumanoidComponent_BindLua* component = Luna<scene::HumanoidComponent_BindLua>::lightcheck(L, 1);
+			if (component == nullptr)
+			{
+				wi::lua::SError(L, "SetRagdollGhostMode(HumanoidComponent component, bool value) first argument is not a RigidBodyPhysicsComponent!");
+				return 0;
+			}
+			bool value = wi::lua::SGetBool(L, 2);
+
+			wi::physics::SetRagdollGhostMode(*component->component, value);
+			return 0;
+		}
+		else
+			wi::lua::SError(L, "SetRagdollGhostMode(HumanoidComponent component, bool value) not enough arguments!");
+		return 0;
+	}
 
 	int Physics_BindLua::Intersects(lua_State* L)
 	{
@@ -580,6 +601,7 @@ namespace wi::lua
 			}
 
 			wi::physics::DriveVehicle(*rb->component, forward, right, brake, handbrake);
+			return 0;
 		}
 		wi::lua::SError(L, "DriveVehicle(RigidBodyPhysicsComponent rigidbody, opt float forward = 0, opt float right = 0, opt float brake = 0, opt float handbrake = 0) not enough arguments!");
 		return 0;

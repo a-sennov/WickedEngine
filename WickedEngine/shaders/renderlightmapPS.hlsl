@@ -132,7 +132,7 @@ float4 main(Input input) : SV_TARGET
 	
 	RayDesc ray;
 	ray.Origin = P;
-	ray.Direction = sample_hemisphere_cos(surface.N, rng);
+	ray.Direction = normalize(sample_hemisphere_cos(surface.N, rng));
 	ray.TMin = 0.0001;
 	ray.TMax = FLT_MAX;
 	float3 result = 0;
@@ -153,7 +153,7 @@ float4 main(Input input) : SV_TARGET
 			const uint light_index = lights().first_item() + rng.next_uint(light_count);
 			ShaderEntity light = load_entity(light_index);
 
-			if (light.GetFlags() & ENTITY_FLAG_LIGHT_STATIC) // dynamic lights will not be baked into lightmap
+			if (bounce > 0 || light.IsStaticLight()) // dynamic lights will not be baked into lightmap at first bounce
 			{
 				Lighting lighting;
 				lighting.create(0, 0, 0, 0);
