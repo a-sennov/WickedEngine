@@ -250,6 +250,16 @@ namespace wi::graphics
 			return CreateBuffer2(desc, [&](void* dest) { std::memcpy(dest, initial_data, desc->size); }, buffer, alias, alias_offset);
 		}
 
+		bool CreateBufferCleared(const GPUBufferDesc* desc, uint8_t value, GPUBuffer* buffer) const
+		{
+			return CreateBuffer2(desc, [&](void* dest) { std::memset(dest, value, desc->size); }, buffer);
+		}
+
+		bool CreateBufferZeroed(const GPUBufferDesc* desc, GPUBuffer* buffer) const
+		{
+			return CreateBufferCleared(desc, 0, buffer);
+		}
+
 		void Barrier(const GPUBarrier& barrier, CommandList cmd)
 		{
 			Barrier(&barrier, 1, cmd);
@@ -335,6 +345,14 @@ namespace wi::graphics
 			GPUAllocation allocation = AllocateGPU(sizeof(T), cmd);
 			std::memcpy(allocation.data, &data, sizeof(T));
 			BindConstantBuffer(&allocation.buffer, slot, cmd, allocation.offset);
+		}
+
+		void RenderPassBegin(const Texture* rendertarget, CommandList cmd, bool clear = true)
+		{
+			RenderPassImage rp[] = {
+				RenderPassImage::RenderTarget(rendertarget, clear ? RenderPassImage::LoadOp::CLEAR : RenderPassImage::LoadOp::LOAD),
+			};
+			RenderPassBegin(rp, arraysize(rp), cmd);
 		}
 
 		// Deprecated, kept for back-compat:

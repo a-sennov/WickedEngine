@@ -673,6 +673,8 @@ PipelineState PSO_volumetricclouds_upsample;
 PipelineState PSO_outline;
 PipelineState PSO_copyDepth;
 PipelineState PSO_copyStencilBit[8];
+PipelineState PSO_copyStencilBit_MSAA[8];
+PipelineState PSO_extractStencilBit[8];
 
 RaytracingPipelineState RTPSO_reflection;
 
@@ -937,6 +939,8 @@ void LoadShaders()
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_POSTPROCESS_VOLUMETRICCLOUDS_UPSAMPLE], "volumetricCloud_upsamplePS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_COPY_DEPTH], "copyDepthPS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_COPY_STENCIL_BIT], "copyStencilBitPS.cso"); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_COPY_STENCIL_BIT_MSAA], "copyStencilBitPS.cso", ShaderModel::SM_6_0, {"MSAA"}); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_EXTRACT_STENCIL_BIT], "extractStencilBitPS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_PAINTDECAL], "paintdecalPS.cso"); });
 
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::GS, shaders[GSTYPE_VOXELIZER], "objectGS_voxelizer.cso"); });
@@ -1492,6 +1496,20 @@ void LoadShaders()
 		{
 			desc.dss = &depthStencils[DSSTYPE_COPY_STENCIL_BIT_0 + i];
 			device->CreatePipelineState(&desc, &PSO_copyStencilBit[i]);
+		}
+
+		desc.ps = &shaders[PSTYPE_COPY_STENCIL_BIT_MSAA];
+		for (int i = 0; i < 8; ++i)
+		{
+			desc.dss = &depthStencils[DSSTYPE_COPY_STENCIL_BIT_0 + i];
+			device->CreatePipelineState(&desc, &PSO_copyStencilBit_MSAA[i]);
+		}
+
+		desc.ps = &shaders[PSTYPE_EXTRACT_STENCIL_BIT];
+		for (int i = 0; i < 8; ++i)
+		{
+			desc.dss = &depthStencils[DSSTYPE_EXTRACT_STENCIL_BIT_0 + i];
+			device->CreatePipelineState(&desc, &PSO_extractStencilBit[i]);
 		}
 		});
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) {
@@ -2074,19 +2092,18 @@ void LoadBuffers()
 	bd.size = sizeof(IndirectDrawArgsInstanced) + (sizeof(XMFLOAT4) + sizeof(XMFLOAT4)) * 1000;
 	bd.bind_flags = BindFlag::VERTEX_BUFFER | BindFlag::UNORDERED_ACCESS;
 	bd.misc_flags = ResourceMiscFlag::BUFFER_RAW | ResourceMiscFlag::INDIRECT_ARGS;
-	device->CreateBuffer(&bd, nullptr, &buffers[BUFFERTYPE_INDIRECT_DEBUG_0]);
+	device->CreateBufferZeroed(&bd, &buffers[BUFFERTYPE_INDIRECT_DEBUG_0]);
 	device->SetName(&buffers[BUFFERTYPE_INDIRECT_DEBUG_0], "buffers[BUFFERTYPE_INDIRECT_DEBUG_0]");
-	device->CreateBuffer(&bd, nullptr, &buffers[BUFFERTYPE_INDIRECT_DEBUG_1]);
+	device->CreateBufferZeroed(&bd, &buffers[BUFFERTYPE_INDIRECT_DEBUG_1]);
 	device->SetName(&buffers[BUFFERTYPE_INDIRECT_DEBUG_1], "buffers[BUFFERTYPE_INDIRECT_DEBUG_1]");
 
 	bd.size = sizeof(IndirectDrawArgsInstanced);
 	bd.usage = Usage::READBACK;
 	bd.bind_flags = {};
 	bd.misc_flags = {};
-	IndirectDrawArgsInstanced initdata_readback = {};
 	for (auto& buf : indirectDebugStatsReadback)
 	{
-		device->CreateBuffer(&bd, &initdata_readback, &buf);
+		device->CreateBufferZeroed(&bd, &buf);
 		device->SetName(&buf, "indirectDebugStatsReadback");
 	}
 
@@ -2341,6 +2358,16 @@ void SetUpStates()
 	{
 		dsd.stencil_write_mask = uint8_t(1 << i);
 		depthStencils[DSSTYPE_COPY_STENCIL_BIT_0 + i] = dsd;
+	}
+
+	dsd.stencil_write_mask = 0;
+	dsd.front_face.stencil_func = ComparisonFunc::EQUAL;
+	dsd.front_face.stencil_pass_op = StencilOp::KEEP;
+	dsd.back_face = dsd.front_face;
+	for (int i = 0; i < 8; ++i)
+	{
+		dsd.stencil_read_mask = uint8_t(1 << i);
+		depthStencils[DSSTYPE_EXTRACT_STENCIL_BIT_0 + i] = dsd;
 	}
 
 
@@ -4103,10 +4130,9 @@ void UpdatePerFrameData(
 			bd.size = required_debug_buffer_size;
 			bd.bind_flags = BindFlag::VERTEX_BUFFER | BindFlag::UNORDERED_ACCESS;
 			bd.misc_flags = ResourceMiscFlag::BUFFER_RAW | ResourceMiscFlag::INDIRECT_ARGS;
-			wi::vector<uint8_t> initdata(bd.size);
-			device->CreateBuffer(&bd, initdata.data(), &buffers[BUFFERTYPE_INDIRECT_DEBUG_0]);
+			device->CreateBufferZeroed(&bd, &buffers[BUFFERTYPE_INDIRECT_DEBUG_0]);
 			device->SetName(&buffers[BUFFERTYPE_INDIRECT_DEBUG_0], "buffers[BUFFERTYPE_INDIRECT_DEBUG_0]");
-			device->CreateBuffer(&bd, initdata.data(), &buffers[BUFFERTYPE_INDIRECT_DEBUG_1]);
+			device->CreateBufferZeroed(&bd, &buffers[BUFFERTYPE_INDIRECT_DEBUG_1]);
 			device->SetName(&buffers[BUFFERTYPE_INDIRECT_DEBUG_1], "buffers[BUFFERTYPE_INDIRECT_DEBUG_1]");
 			std::memset(indirectDebugStatsReadback_available, 0, sizeof(indirectDebugStatsReadback_available));
 		}
@@ -4712,6 +4738,7 @@ void UpdateRenderData(
 	PushBarrier(GPUBarrier::Image(&textures[TEXTYPE_3D_WIND], textures[TEXTYPE_3D_WIND].desc.layout, ResourceState::UNORDERED_ACCESS));
 	PushBarrier(GPUBarrier::Image(&textures[TEXTYPE_3D_WIND_PREV], textures[TEXTYPE_3D_WIND_PREV].desc.layout, ResourceState::UNORDERED_ACCESS));
 	PushBarrier(GPUBarrier::Image(&textures[TEXTYPE_2D_CAUSTICS], textures[TEXTYPE_2D_CAUSTICS].desc.layout, ResourceState::UNORDERED_ACCESS));
+	PushBarrier(GPUBarrier::Buffer(&buffers[BUFFERTYPE_INDIRECT_DEBUG_0], ResourceState::VERTEX_BUFFER | ResourceState::INDIRECT_ARGUMENT, ResourceState::COPY_SRC));
 	FlushBarriers(cmd);
 
 	device->ClearUAV(&textures[TEXTYPE_3D_WIND], 0, cmd);
@@ -4814,7 +4841,7 @@ void UpdateRenderData(
 	debug_indirect.StartInstanceLocation = 0;
 	device->UpdateBuffer(&buffers[BUFFERTYPE_INDIRECT_DEBUG_0], &debug_indirect, cmd, sizeof(debug_indirect));
 	PushBarrier(GPUBarrier::Buffer(&buffers[BUFFERTYPE_INDIRECT_DEBUG_0], ResourceState::COPY_DST, ResourceState::UNORDERED_ACCESS));
-	PushBarrier(GPUBarrier::Buffer(&buffers[BUFFERTYPE_INDIRECT_DEBUG_1], ResourceState::UNORDERED_ACCESS, ResourceState::VERTEX_BUFFER | ResourceState::INDIRECT_ARGUMENT | ResourceState::COPY_SRC));
+	PushBarrier(GPUBarrier::Buffer(&buffers[BUFFERTYPE_INDIRECT_DEBUG_1], ResourceState::UNORDERED_ACCESS, ResourceState::VERTEX_BUFFER | ResourceState::INDIRECT_ARGUMENT));
 
 	// Flush buffer updates:
 	FlushBarriers(cmd);
@@ -4943,14 +4970,6 @@ void UpdateRenderData(
 	}
 
 	FlushBarriers(cmd); // wind/skinning flush
-
-	// Hair particle initialization is needed for all, not just visible ones:
-	//	This fixes an issue when hair is included in ray tracing acceleration
-	//	structure, but not yet updated properly, because it was not yet visible
-	for (size_t i = 0; i < vis.scene->hairs.GetCount(); ++i)
-	{
-		vis.scene->hairs[i].InitializeGPUDataIfNeeded(cmd);
-	}
 
 	// Hair particle systems GPU simulation:
 	//	(This must be non-async too, as prepass will render hairs!)
@@ -5729,11 +5748,34 @@ void DrawSpritesAndFonts(
 			const wi::SpriteFont& font = scene.fonts[i];
 			if (font.IsHidden())
 				continue;
+			AABB aabb = scene.aabb_fonts[i];
+			Entity entity = scene.fonts.GetEntity(i);
+			const TransformComponent* transform = scene.transforms.GetComponent(entity);
+			float scale = 1;
+			if (font.IsCameraScaling())
+			{
+				if (transform != nullptr)
+				{
+					scale *= 0.05f * wi::math::Distance(transform->GetPosition(), camera.Eye);
+				}
+			}
+			aabb = aabb * scale;
+			XMMATRIX M = XMMatrixIdentity();
+			if (transform != nullptr)
+			{
+				M = transform->GetWorldMatrix();
+			}
+			if (font.IsCameraFacing())
+			{
+				M = R * M;
+			}
+			aabb = aabb.transform(M);
+			//DrawBox(aabb);
+			if (!camera.frustum.CheckBoxFast(aabb))
+				continue;
 			DistanceSorter sorter = {};
 			sorter.bits.id = uint32_t(i);
 			sorter.bits.type = FONT;
-			Entity entity = scene.fonts.GetEntity(i);
-			const TransformComponent* transform = scene.transforms.GetComponent(entity);
 			if (transform != nullptr)
 			{
 				sorter.bits.distance = XMConvertFloatToHalf(wi::math::DistanceEstimated(transform->GetPosition(), camera.Eye));
@@ -17791,6 +17833,7 @@ void CopyDepthStencil(
 
 	if (manual_depthstencil_copy_required)
 	{
+		// Vulkan workaround:
 		PushBarrier(GPUBarrier::Image(input_depth, input_depth->desc.layout, ResourceState::SHADER_RESOURCE));
 		PushBarrier(GPUBarrier::Image(input_stencil, input_stencil->desc.layout, ResourceState::SHADER_RESOURCE));
 		FlushBarriers(cmd);
@@ -17830,15 +17873,27 @@ void CopyDepthStencil(
 			device->EventBegin("CopyStencilBits", cmd);
 			device->BindResource(input_stencil, 0, cmd);
 
+			StencilBitPush push = {};
+			push.output_resolution_rcp.x = 1.0f / vp.width;
+			push.output_resolution_rcp.y = 1.0f / vp.height;
+			push.input_resolution = (input_stencil->desc.width & 0xFFFF) | (input_stencil->desc.height << 16u);
+
 			uint32_t bit_index = 0;
 			while (stencil_bits_to_copy != 0)
 			{
 				if (stencil_bits_to_copy & 0x1)
 				{
-					device->BindPipelineState(&PSO_copyStencilBit[bit_index], cmd);
-					const uint bit = 1u << bit_index;
-					device->PushConstants(&bit, sizeof(bit), cmd);
-					device->BindStencilRef(bit, cmd);
+					if (input_stencil->desc.sample_count > 1)
+					{
+						device->BindPipelineState(&PSO_copyStencilBit_MSAA[bit_index], cmd);
+					}
+					else
+					{
+						device->BindPipelineState(&PSO_copyStencilBit[bit_index], cmd);
+					}
+					push.bit = 1u << bit_index;
+					device->PushConstants(&push, sizeof(push), cmd);
+					device->BindStencilRef(push.bit, cmd);
 					device->Draw(3, 0, cmd);
 				}
 				bit_index++;
@@ -17855,30 +17910,49 @@ void CopyDepthStencil(
 	}
 	else
 	{
-		PushBarrier(GPUBarrier::Image(input_depth, input_depth->desc.layout, ResourceState::COPY_SRC));
-		PushBarrier(GPUBarrier::Image(input_stencil, input_stencil->desc.layout, ResourceState::COPY_SRC));
+		// Normal copy from color to depth/stencil aspects:
+		if (input_depth != nullptr)
+		{
+			PushBarrier(GPUBarrier::Image(input_depth, input_depth->desc.layout, ResourceState::COPY_SRC));
+		}
+		if (input_stencil != nullptr)
+		{
+			PushBarrier(GPUBarrier::Image(input_stencil, input_stencil->desc.layout, ResourceState::COPY_SRC));
+		}
 		PushBarrier(GPUBarrier::Image(&output_depth_stencil, output_depth_stencil.desc.layout, ResourceState::COPY_DST));
 		FlushBarriers(cmd);
 
-		device->CopyTexture(
-			&output_depth_stencil, 0, 0, 0, 0, 0,
-			input_depth, 0, 0,
-			cmd,
-			nullptr,
-			ImageAspect::DEPTH,
-			ImageAspect::COLOR
-		);
-		device->CopyTexture(
-			&output_depth_stencil, 0, 0, 0, 0, 0,
-			input_stencil, 0, 0,
-			cmd,
-			nullptr,
-			ImageAspect::STENCIL,
-			ImageAspect::COLOR
-		);
+		if (input_depth != nullptr)
+		{
+			device->CopyTexture(
+				&output_depth_stencil, 0, 0, 0, 0, 0,
+				input_depth, 0, 0,
+				cmd,
+				nullptr,
+				ImageAspect::DEPTH,
+				ImageAspect::COLOR
+			);
+		}
+		if (input_stencil != nullptr)
+		{
+			device->CopyTexture(
+				&output_depth_stencil, 0, 0, 0, 0, 0,
+				input_stencil, 0, 0,
+				cmd,
+				nullptr,
+				ImageAspect::STENCIL,
+				ImageAspect::COLOR
+			);
+		}
 
-		PushBarrier(GPUBarrier::Image(input_depth, ResourceState::COPY_SRC, input_depth->desc.layout));
-		PushBarrier(GPUBarrier::Image(input_stencil, ResourceState::COPY_SRC, input_stencil->desc.layout));
+		if (input_depth != nullptr)
+		{
+			PushBarrier(GPUBarrier::Image(input_depth, ResourceState::COPY_SRC, input_depth->desc.layout));
+		}
+		if (input_stencil != nullptr)
+		{
+			PushBarrier(GPUBarrier::Image(input_stencil, ResourceState::COPY_SRC, input_stencil->desc.layout));
+		}
 		PushBarrier(GPUBarrier::Image(&output_depth_stencil, ResourceState::COPY_DST, output_depth_stencil.desc.layout));
 		FlushBarriers(cmd);
 	}
@@ -17886,6 +17960,130 @@ void CopyDepthStencil(
 	device->EventEnd(cmd);
 }
 
+void ScaleStencilMask(
+	const Viewport& vp,
+	const Texture& input,
+	CommandList cmd
+)
+{
+	device->EventBegin("ScaleStencilMask", cmd);
+
+	device->BindResource(&input, 0, cmd);
+
+	RenderPassInfo info = device->GetRenderPassInfo(cmd);
+	assert(IsFormatStencilSupport(info.ds_format)); // the current render pass must have stencil
+
+	StencilBitPush push = {};
+	push.output_resolution_rcp.x = 1.0f / vp.width;
+	push.output_resolution_rcp.y = 1.0f / vp.height;
+	push.input_resolution = (input.desc.width & 0xFFFF) | (input.desc.height << 16u);
+
+	uint8_t stencil_bits_to_copy = 0xFF;
+	uint32_t bit_index = 0;
+	while (stencil_bits_to_copy != 0)
+	{
+		if (stencil_bits_to_copy & 0x1)
+		{
+			if (input.desc.sample_count > 1)
+			{
+				device->BindPipelineState(&PSO_copyStencilBit_MSAA[bit_index], cmd);
+			}
+			else
+			{
+				device->BindPipelineState(&PSO_copyStencilBit[bit_index], cmd);
+			}
+			push.bit = 1u << bit_index;
+			device->PushConstants(&push, sizeof(push), cmd);
+			device->BindStencilRef(push.bit, cmd);
+			device->Draw(3, 0, cmd);
+		}
+		bit_index++;
+		stencil_bits_to_copy >>= 1;
+	}
+
+	device->EventEnd(cmd);
+}
+
+void ExtractStencil(
+	const Texture& input_depthstencil,
+	const Texture& output,
+	CommandList cmd
+)
+{
+	device->EventBegin("ExtractStencil", cmd);
+
+	if (device->CheckCapability(GraphicsDeviceCapability::COPY_BETWEEN_DIFFERENT_IMAGE_ASPECTS_NOT_SUPPORTED))
+	{
+		// Vulkan workaround:
+		device->EventBegin("ExtractStencilBits", cmd);
+
+		RenderPassImage rp[] = {
+			RenderPassImage::RenderTarget(&output,RenderPassImage::LoadOp::CLEAR),
+			RenderPassImage::DepthStencil(&input_depthstencil),
+		};
+		device->RenderPassBegin(rp, arraysize(rp), cmd);
+
+		Viewport vp;
+		vp.width = (float)output.desc.width;
+		vp.height = (float)output.desc.height;
+		device->BindViewports(1, &vp, cmd);
+
+		Rect rect;
+		rect.left = 0;
+		rect.right = output.desc.width;
+		rect.top = 0;
+		rect.bottom = output.desc.height;
+		device->BindScissorRects(1, &rect, cmd);
+
+		StencilBitPush push = {};
+		push.output_resolution_rcp.x = 1.0f / vp.width;
+		push.output_resolution_rcp.y = 1.0f / vp.height;
+		push.input_resolution = (input_depthstencil.desc.width & 0xFFFF) | (input_depthstencil.desc.height << 16u);
+
+		device->BindStencilRef(0xFFFFFFFF, cmd);
+
+		uint8_t stencil_bits_to_extract = 0xFF;
+		uint32_t bit_index = 0;
+		while (stencil_bits_to_extract != 0)
+		{
+			if (stencil_bits_to_extract & 0x1)
+			{
+				device->BindPipelineState(&PSO_extractStencilBit[bit_index], cmd);
+				push.bit = 1u << bit_index;
+				device->PushConstants(&push, sizeof(push), cmd);
+				device->Draw(3, 0, cmd);
+			}
+			bit_index++;
+			stencil_bits_to_extract >>= 1;
+		}
+
+		device->RenderPassEnd(cmd);
+
+		device->EventEnd(cmd);
+	}
+	else
+	{
+		// Normal copy from stencil aspect to color:
+		PushBarrier(GPUBarrier::Image(&input_depthstencil, input_depthstencil.desc.layout, ResourceState::COPY_SRC));
+		PushBarrier(GPUBarrier::Image(&output, output.desc.layout, ResourceState::COPY_DST));
+		FlushBarriers(cmd);
+
+		device->CopyTexture(
+			&output, 0, 0, 0, 0, 0,
+			&input_depthstencil, 0, 0,
+			cmd,
+			nullptr,
+			ImageAspect::COLOR,
+			ImageAspect::STENCIL
+		);
+
+		PushBarrier(GPUBarrier::Image(&input_depthstencil, ResourceState::COPY_SRC, input_depthstencil.desc.layout));
+		PushBarrier(GPUBarrier::Image(&output, ResourceState::COPY_DST, output.desc.layout));
+		FlushBarriers(cmd);
+	}
+
+	device->EventEnd(cmd);
+}
 
 void ComputeReprojectedDepthPyramid(
 	const Texture& input_depth,
@@ -18004,6 +18202,16 @@ Ray GetPickRay(long cursorX, long cursorY, const wi::Canvas& canvas, const Camer
 	return Ray(lineStart, rayDirection);
 }
 
+void DrawBox(const wi::primitive::AABB& aabb, const XMFLOAT4& color, bool depth)
+{
+	DrawBox(aabb.getAsBoxMatrix(), color, depth);
+}
+void DrawBox(const XMMATRIX& boxMatrix, const XMFLOAT4& color, bool depth)
+{
+	XMFLOAT4X4 m;
+	XMStoreFloat4x4(&m, boxMatrix);
+	DrawBox(m, color, depth);
+}
 void DrawBox(const XMFLOAT4X4& boxMatrix, const XMFLOAT4& color, bool depth)
 {
 	if(depth)

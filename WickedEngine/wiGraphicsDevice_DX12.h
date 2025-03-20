@@ -116,7 +116,8 @@ namespace wi::graphics
 		};
 		mutable CopyAllocator copyAllocator;
 
-		Microsoft::WRL::ComPtr<ID3D12Fence> frame_fence[BUFFERCOUNT][QUEUE_COUNT];
+		Microsoft::WRL::ComPtr<ID3D12Fence> frame_fence_cpu[BUFFERCOUNT][QUEUE_COUNT];
+		Microsoft::WRL::ComPtr<ID3D12Fence> frame_fence_gpu[BUFFERCOUNT][QUEUE_COUNT];
 
 		struct DescriptorBinder
 		{
@@ -142,6 +143,7 @@ namespace wi::graphics
 			{
 				Semaphore& dependency = semaphore_pool.emplace_back();
 				dx12_check(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, PPV_ARGS(dependency.fence)));
+				dx12_check(dependency.fence.Get()->SetName(L"DependencySemaphore"));
 			}
 			Semaphore semaphore = std::move(semaphore_pool.back());
 			semaphore_pool.pop_back();
