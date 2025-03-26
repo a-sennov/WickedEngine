@@ -348,11 +348,6 @@ namespace wi
 	{
 		GraphicsDevice* device = wi::graphics::GetDevice();
 
-		if (rtMain_render.desc.sample_count != msaaSampleCount)
-		{
-			ResizeBuffers();
-		}
-
 		RenderPath2D::Update(dt);
 
 		wi::renderer::SetShadowsEnabled(getShadowsEnabled());
@@ -381,9 +376,12 @@ namespace wi
 
 	void RenderPath3D::PreRender()
 	{
-		RenderPath2D::PreRender();
-
 		GraphicsDevice* device = wi::graphics::GetDevice();
+
+		if (rtMain_render.desc.sample_count != msaaSampleCount)
+		{
+			ResizeBuffers();
+		}
 
 		// Frustum culling for main camera:
 		visibility_main.layerMask = getLayerMask();
@@ -832,6 +830,8 @@ namespace wi
 		}
 
 		prerender_happened = true;
+
+		RenderPath2D::PreRender();
 	}
 
 	void RenderPath3D::Render() const
@@ -2533,7 +2533,8 @@ namespace wi
 			{
 				auto range = wi::profiler::BeginRangeGPU("GUI Background Blur", cmd);
 				device->EventBegin("GUI Background Blur", cmd);
-				wi::renderer::Postprocess_Downsample4x(*rt_read, rtGUIBlurredBackground[0], cmd);
+				bool hdrToSRGB = colorspace != ColorSpace::SRGB;
+				wi::renderer::Postprocess_Downsample4x(*rt_read, rtGUIBlurredBackground[0], cmd, hdrToSRGB);
 				wi::renderer::Postprocess_Downsample4x(rtGUIBlurredBackground[0], rtGUIBlurredBackground[2], cmd);
 				wi::renderer::Postprocess_Blur_Gaussian(rtGUIBlurredBackground[2], rtGUIBlurredBackground[1], rtGUIBlurredBackground[2], cmd, -1, -1, true);
 				device->EventEnd(cmd);

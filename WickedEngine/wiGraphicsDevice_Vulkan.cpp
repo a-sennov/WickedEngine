@@ -357,6 +357,8 @@ namespace vulkan_internal
 		case ResourceState::VIDEO_DECODE_SRC:
 		case ResourceState::VIDEO_DECODE_DST:
 			return VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR;
+		case ResourceState::SWAPCHAIN:
+			return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 		default:
 			// combination of state flags will default to general
 			//	whether the combination of states is valid needs to be validated by the user
@@ -1446,13 +1448,10 @@ using namespace vulkan_internal;
 		{
 			if (freelist[i].uploadbuffer.desc.size >= staging_size)
 			{
-				if (vkGetFenceStatus(device->device, freelist[i].fence) == VK_SUCCESS)
-				{
-					cmd = std::move(freelist[i]);
-					std::swap(freelist[i], freelist.back());
-					freelist.pop_back();
-					break;
-				}
+				cmd = std::move(freelist[i]);
+				std::swap(freelist[i], freelist.back());
+				freelist.pop_back();
+				break;
 			}
 		}
 		locker.unlock();
@@ -1522,22 +1521,21 @@ using namespace vulkan_internal;
 		VkCommandBufferSubmitInfo cbSubmitInfo = {};
 		cbSubmitInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
 
-		VkSemaphoreSubmitInfo signalSemaphoreInfos[2] = {};
-		signalSemaphoreInfos[0].sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-		signalSemaphoreInfos[1].sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+		VkSemaphoreSubmitInfo signalSemaphoreInfo = {};
+		signalSemaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
 
 		VkSemaphoreSubmitInfo waitSemaphoreInfo = {};
 		waitSemaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
 
 		{
 			cbSubmitInfo.commandBuffer = cmd.transferCommandBuffer;
-			signalSemaphoreInfos[0].semaphore = cmd.semaphore; // signal for graphics queue
-			signalSemaphoreInfos[0].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+			signalSemaphoreInfo.semaphore = cmd.semaphore; // signal for graphics queue
+			signalSemaphoreInfo.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
 
 			submitInfo.commandBufferInfoCount = 1;
 			submitInfo.pCommandBufferInfos = &cbSubmitInfo;
 			submitInfo.signalSemaphoreInfoCount = 1;
-			submitInfo.pSignalSemaphoreInfos = signalSemaphoreInfos;
+			submitInfo.pSignalSemaphoreInfos = &signalSemaphoreInfo;
 
 			std::scoped_lock lock(*device->queue_init.locker);
 			vulkan_check(vkQueueSubmit2(device->queue_init.queue, 1, &submitInfo, VK_NULL_HANDLE));
@@ -7406,6 +7404,7 @@ using namespace vulkan_internal;
 		result.desc.width = swapchain_internal->swapChainExtent.width;
 		result.desc.height = swapchain_internal->swapChainExtent.height;
 		result.desc.format = swapchain->desc.format;
+		result.desc.layout = ResourceState::SWAPCHAIN;
 		return result;
 	}
 	ColorSpace GraphicsDevice_Vulkan::GetSwapChainColorSpace(const SwapChain* swapchain) const
@@ -8196,7 +8195,11 @@ using namespace vulkan_internal;
 	void GraphicsDevice_Vulkan::BindStencilRef(uint32_t value, CommandList cmd)
 	{
 		CommandList_Vulkan& commandlist = GetCommandList(cmd);
-		vkCmdSetStencilReference(commandlist.GetCommandBuffer(), VK_STENCIL_FRONT_AND_BACK, value);
+		if (commandlist.prev_stencilref != value)
+		{
+			commandlist.prev_stencilref = value;
+			vkCmdSetStencilReference(commandlist.GetCommandBuffer(), VK_STENCIL_FRONT_AND_BACK, value);
+		}
 	}
 	void GraphicsDevice_Vulkan::BindBlendFactor(float r, float g, float b, float a, CommandList cmd)
 	{
