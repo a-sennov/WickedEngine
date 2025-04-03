@@ -4,6 +4,7 @@
 #include "wiGraphicsDevice.h"
 #include "wiResourceManager.h"
 #include "wiScene.h"
+#include "wiUnorderedMap.h"
 
 namespace wi
 {
@@ -86,6 +87,8 @@ namespace wi
 
 		mutable bool first_frame = true;
 		mutable bool prerender_happened = false;
+
+		void RenderCameraComponents(wi::jobsystem::context& ctx) const;
 
 	public:
 		wi::graphics::Texture rtMain;

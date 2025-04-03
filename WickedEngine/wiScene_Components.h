@@ -257,6 +257,8 @@ namespace wi::scene
 		int customShaderID = -1;
 		uint4 userdata = uint4(0, 0, 0, 0); // can be accessed by custom shader
 
+		wi::ecs::Entity cameraSource = wi::ecs::INVALID_ENTITY; // take texture from camera render
+
 		// Non-serialized attributes:
 		uint32_t layerMask = ~0u;
 		int sampler_descriptor = -1; // optional
@@ -410,6 +412,7 @@ namespace wi::scene
 			CONVEX_HULL,
 			TRIANGLE_MESH,
 			CYLINDER,
+			HEIGHTFIELD,
 			ENUM_FORCE_UINT32 = 0xFFFFFFFF
 		};
 		CollisionShape shape;
@@ -699,6 +702,15 @@ namespace wi::scene
 
 		// Creates a new subset as a combination of the subsets of the first LOD, returns its index. This works if there are multiple LODs which are also contained in subsets array
 		size_t CreateSubset();
+
+		// Deletes a subset from all LODs
+		void DeleteSubset(uint32_t subsetIndex);
+
+		// Set a material to a subset in all LODs
+		void SetSubsetMaterial(uint32_t subsetIndex, wi::ecs::Entity entity);
+
+		// Get the material from the subsetIndex in the first LOD
+		wi::ecs::Entity GetSubsetMaterial(uint32_t subsetIndex);
 
 		// Deletes all GPU resources
 		void DeleteRenderData();
@@ -1218,6 +1230,7 @@ namespace wi::scene
 		mutable int occlusionquery = -1;
 		XMFLOAT4 rotation = XMFLOAT4(0, 0, 0, 1);
 		XMFLOAT3 scale = XMFLOAT3(1, 1, 1);
+		int maskTexDescriptor = -1;
 
 		wi::vector<wi::Resource> lensFlareRimTextures;
 
@@ -1321,6 +1334,20 @@ namespace wi::scene
 		int texture_vxgi_specular_index = -1;
 		int texture_reprojected_depth_index = -1;
 		uint shadercamera_options = SHADERCAMERA_OPTION_NONE;
+
+		struct RenderToTexture
+		{
+			XMUINT2 resolution = XMUINT2(0, 0);
+			uint32_t sample_count = 1;
+			wi::graphics::Texture rendertarget_MSAA;
+			wi::graphics::Texture rendertarget_render;
+			wi::graphics::Texture rendertarget_display;
+			wi::graphics::Texture depthstencil;
+			wi::graphics::Texture depthstencil_resolved;
+			XMUINT2 tileCount = {};
+			wi::graphics::GPUBuffer entityTiles;
+			std::shared_ptr<void> visibility;
+		} render_to_texture;
 
 		void CreateOrtho(float newWidth, float newHeight, float newNear, float newFar, float newVerticalSize = 1);
 		void CreatePerspective(float newWidth, float newHeight, float newNear, float newFar, float newFOV = XM_PI / 3.0f);

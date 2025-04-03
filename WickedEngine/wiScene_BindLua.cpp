@@ -697,6 +697,8 @@ Luna<Scene_BindLua>::FunctionType Scene_BindLua::methods[] = {
 	lunamethod(Scene_BindLua, GetOceanPosAt),
 	lunamethod(Scene_BindLua, VoxelizeObject),
 	lunamethod(Scene_BindLua, VoxelizeScene),
+
+	lunamethod(Scene_BindLua, FixupNans),
 	{ NULL, NULL }
 };
 Luna<Scene_BindLua>::PropertyType Scene_BindLua::properties[] = {
@@ -3436,7 +3438,11 @@ int Scene_BindLua::VoxelizeScene(lua_State* L)
 	scene->VoxelizeScene(*voxelgrid->voxelgrid, subtract, filterMask, layerMask, lod);
 	return 0;
 }
-
+int Scene_BindLua::FixupNans(lua_State* L)
+{
+	scene->FixupNans();
+	return 0;
+}
 
 
 
@@ -4796,21 +4802,9 @@ int MeshComponent_BindLua::SetMeshSubsetMaterialID(lua_State* L)
 	int argc = wi::lua::SGetArgCount(L);
 	if (argc >= 2)
 	{
-		size_t subsetindex = (uint32_t)wi::lua::SGetLongLong(L, 1);
+		uint32_t subsetindex = (uint32_t)wi::lua::SGetLongLong(L, 1);
 		Entity entity = (Entity)wi::lua::SGetLongLong(L, 2);
-
-		const uint32_t lod_count = component->GetLODCount();
-		for (uint32_t lod = 0; lod < lod_count; ++lod)
-		{
-			uint32_t first_subset = 0;
-			uint32_t last_subset = 0;
-			component->GetLODSubsetRange(lod, first_subset, last_subset);
-			size_t subset_offset = first_subset + subsetindex;
-			if (subset_offset < last_subset)
-			{
-				component->subsets[subset_offset].materialID = entity;
-			}
-		}
+		component->SetSubsetMaterial(subsetindex, entity);
 	}
 	else
 	{
@@ -4824,18 +4818,9 @@ int MeshComponent_BindLua::GetMeshSubsetMaterialID(lua_State* L)
 	int argc = wi::lua::SGetArgCount(L);
 	if (argc > 0)
 	{
-		size_t subsetindex = wi::lua::SGetLongLong(L, 1);
-
-		if(subsetindex < component->subsets.size())
-		{
-			auto& subsetdata = component->subsets[subsetindex];
-			wi::lua::SSetLongLong(L, subsetdata.materialID);
-			return 1;
-		}
-		else
-		{
-			wi::lua::SError(L, "GetMeshSubsetMaterialID(int subsetindex) index out of range!");
-		}
+		uint32_t subsetindex = (uint32_t)wi::lua::SGetLongLong(L, 1);
+		wi::lua::SSetLongLong(L, component->GetSubsetMaterial(subsetindex));
+		return 1;
 	}
 	else
 	{

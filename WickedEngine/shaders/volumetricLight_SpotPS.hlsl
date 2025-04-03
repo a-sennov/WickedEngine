@@ -28,11 +28,12 @@ bool intersectInfiniteCone(float3 p, float3 v, float3 pa, float3 va, float sina2
 	float C = cosa2 * dot(dpvava, dpvava) - sina2 * dpva * dpva;
 
 	float disc = B*B - 4 * A*C;
-	if (disc < 0.0001)return false;
+	if (disc < 0.0001)
+		return false;
 
-	float sqrtDisc = sqrt( disc );
-	tnear = (-B - sqrtDisc ) / (2*A);
-	tfar = (-B + sqrtDisc ) / (2*A);
+	float sqrtDisc = sqrt(disc);
+	tnear = (-B - sqrtDisc) / (2*A);
+	tfar = (-B + sqrtDisc) / (2*A);
 	return true;
 }
 
@@ -65,7 +66,7 @@ float4 main(VertexToPixel input) : SV_TARGET
 	float marchedDistance = 0;
 	half3 accumulation = 0;
 
-	float3 rayEnd = GetCamera().position;
+	float3 rayEnd = nearP;
 
 	if(g_xColor.w > 0)
 	{
@@ -73,9 +74,9 @@ float4 main(VertexToPixel input) : SV_TARGET
 		float tnear = 0;
 		float tfar = 0;
 		float2 sina2_cosa2 = unpack_half2(asuint(g_xColor.z));
-		if(intersectInfiniteCone(GetCamera().position, -V, light.position, light.GetDirection(), sina2_cosa2.x, sina2_cosa2.y, tnear, tfar))
+		if (intersectInfiniteCone(GetCamera().position, -V, light.position, light.GetDirection(), sina2_cosa2.x, sina2_cosa2.y, tnear, tfar))
 		{
-			rayEnd = nearP - V * max(0, tnear);
+			rayEnd -= V * max(0, tnear);
 			//return float4(1,0,0,1);
 		}
 	}
@@ -86,6 +87,8 @@ float4 main(VertexToPixel input) : SV_TARGET
 
 	// dither ray start to help with undersampling:
 	P = P + V * stepSize * dither(input.pos.xy);
+	
+	const uint maskTex = light.GetTextureIndex();
 
 	// Perform ray marching to integrate light volume along view ray:
 	[loop]
@@ -117,6 +120,16 @@ float4 main(VertexToPixel input) : SV_TARGET
 				{
 					attenuation *= shadow_2D(light, shadow_pos.xyz, shadow_uv.xy, 0, input.pos.xy);
 				}
+			}
+			
+			[branch]
+			if (maskTex > 0)
+			{
+				float4 shadow_pos = mul(load_entitymatrix(light.GetMatrixIndex() + 0), float4(P, 1));
+				shadow_pos.xyz /= shadow_pos.w;
+				float2 shadow_uv = shadow_pos.xy * float2(0.5f, -0.5f) + float2(0.5f, 0.5f);
+				half4 mask = bindless_textures_half4[descriptor_index(maskTex)].Sample(sampler_linear_clamp, shadow_uv);
+				attenuation *= mask.rgb * mask.a;
 			}
 
 			// Evaluate sample height for exponential fog calculation, given 0 for V:
