@@ -30,6 +30,10 @@ namespace wi::physics
 	void SetDebugDrawEnabled(bool value);
 	bool IsDebugDrawEnabled();
 
+	// Adjust constraint debugging sizes
+	void SetConstraintDebugSize(float value);
+	float GetConstraintDebugSize();
+
 	// Set the accuracy of the simulation
 	//	This value corresponds to maximum simulation step count
 	//	Higher values will be slower but more accurate
@@ -45,6 +49,17 @@ namespace wi::physics
 		wi::jobsystem::context& ctx,
 		wi::scene::Scene& scene,
 		float dt
+	);
+
+	// Teleport a dynamic rigid body:
+	void SetPosition(
+		wi::scene::RigidBodyPhysicsComponent& physicscomponent,
+		const XMFLOAT3& position
+	);
+	void SetPositionAndRotation(
+		wi::scene::RigidBodyPhysicsComponent& physicscomponent,
+		const XMFLOAT3& position,
+		const XMFLOAT4& rotation
 	);
 
 	// Set linear velocity to rigid body
@@ -144,6 +159,14 @@ namespace wi::physics
 		uint32_t physicsIndex
 	);
 
+	void SetGhostMode(
+		wi::scene::RigidBodyPhysicsComponent& physicscomponent,
+		bool value
+	);
+	void SetGhostMode(
+		wi::scene::HumanoidComponent& humanoid,
+		bool value
+	);
 	void SetRagdollGhostMode(wi::scene::HumanoidComponent& humanoid, bool value);
 
 	struct RayIntersectionResult

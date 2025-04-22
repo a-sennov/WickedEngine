@@ -182,6 +182,7 @@ namespace wi::terrain
 		wi::scene::Scene scene; // The background generation thread can safely add things to this, it will be merged into the main scene when it is safe to do so
 		wi::jobsystem::context workload;
 		std::atomic_bool cancelled{ false };
+		wi::vector<SplineComponent> splines;
 	};
 
 	wi::jobsystem::context virtual_texture_ctx;
@@ -593,6 +594,20 @@ namespace wi::terrain
 				break;
 			}
 		}
+		for (size_t i = 0; i < scene->splines.GetCount(); ++i)
+		{
+			const SplineComponent& spline = scene->splines[i];
+			if (spline.terrain_modifier_amount > 0 || spline.prev_terrain_modifier_amount > 0)
+			{
+				restart_generation |= spline.dirty_terrain;
+				if (restart_generation)
+				{
+					spline.dirty_terrain = false;
+					spline.prev_terrain_modifier_amount = spline.terrain_modifier_amount;
+					spline.prev_terrain_generation_nodes = (int)spline.spline_node_entities.size();
+				}
+			}
+		}
 
 		if (restart_generation)
 		{
@@ -856,6 +871,18 @@ namespace wi::terrain
 		// Start the generation on a background thread and keep it running until the next frame
 		generator->cancelled.store(false);
 		generator->workload.priority = wi::jobsystem::Priority::Low;
+		generator->splines.clear();
+		for (size_t i = 0; i < scene->splines.GetCount(); ++i)
+		{
+			const SplineComponent& spline = scene->splines[i];
+			if (spline.terrain_modifier_amount > 0)
+			{
+				generator->splines.push_back(spline);
+				// extrude spline aabb for heightfield check:
+				generator->splines.back().aabb._min.y = -FLT_MAX;
+				generator->splines.back().aabb._max.y = FLT_MAX;
+			}
+		}
 		wi::jobsystem::Execute(generator->workload, [=](wi::jobsystem::JobArgs a) {
 
 			wi::Timer timer;
@@ -931,32 +958,55 @@ namespace wi::terrain
 					// Do a parallel for loop over all the chunk's vertices and compute their properties:
 					wi::jobsystem::context ctx;
 					ctx.priority = wi::jobsystem::Priority::Low;
-					wi::jobsystem::Dispatch(ctx, vertexCount, chunk_width, [&](wi::jobsystem::JobArgs args) {
-						uint32_t index = args.jobIndex;
-						const float x = (float(index % chunk_width) - chunk_half_width) * chunk_scale;
-						const float z = (float(index / chunk_width) - chunk_half_width) * chunk_scale;
-						XMVECTOR corners[3];
-						XMFLOAT2 corner_offsets[3] = {
-							XMFLOAT2(0, 0),
-							XMFLOAT2(1, 0),
-							XMFLOAT2(0, 1),
-						};
-						for (int i = 0; i < arraysize(corners); ++i)
+
+					// Preload height grid with padding, because neighbors will need to be accessed to determine slopes:
+					constexpr int chunk_width_padded = chunk_width + 1;
+					constexpr uint32_t vertexCount_padded = chunk_width_padded * chunk_width_padded;
+					float heights_padded[chunk_width_padded][chunk_width_padded];
+					const XMVECTOR UP = XMVectorSet(0, 1, 0, 0);
+					wi::jobsystem::Dispatch(ctx, vertexCount_padded, chunk_width_padded * 4, [&](wi::jobsystem::JobArgs args) {
+						const uint32_t index = args.jobIndex;
+						const XMUINT2 coord = XMUINT2(index % chunk_width_padded, index / chunk_width_padded);
+						const float x = (float(coord.x) - chunk_half_width) * chunk_scale;
+						const float z = (float(coord.y) - chunk_half_width) * chunk_scale;
+
+						float height = 0;
+						const XMFLOAT2 world_pos = XMFLOAT2(chunk_data.position.x + x, chunk_data.position.z + z);
+						for (auto& modifier : modifiers)
 						{
-							float height = 0;
-							const XMFLOAT2 world_pos = XMFLOAT2(chunk_data.position.x + x + corner_offsets[i].x, chunk_data.position.z + z + corner_offsets[i].y);
-							for (auto& modifier : modifiers)
-							{
-								modifier->Apply(world_pos, height);
-							}
-							if (i == 0)
-							{
-								chunk_data.heightmap_data[index] = uint16_t(height * 65535);
-							}
-							height = wi::math::Lerp(bottomLevel, topLevel, height);
-							corners[i] = XMVectorSet(world_pos.x, height, world_pos.y, 0);
+							modifier->Apply(world_pos, height);
 						}
-						const float height = XMVectorGetY(corners[0]);
+						height = lerp(bottomLevel, topLevel, height);
+
+						// Apply splines to height only:
+						const XMVECTOR P = XMVectorSet(world_pos.x, -100000, world_pos.y, 0);
+						for (size_t j = 0; j < generator->splines.size(); ++j)
+						{
+							const SplineComponent& spline = generator->splines[j];
+							if (!spline.aabb.intersects(P))
+								continue;
+							XMVECTOR S = spline.TraceSplinePlane(P, UP, 4);
+							S = spline.ClosestPointOnSpline(S, 4);
+							const float splineheight = XMVectorGetY(S);
+							const float splinedist = wi::math::Distance(XMVectorSetY(P, splineheight), S);
+							height = lerp(splineheight, height, smoothstep(0.0f, 1.0f, saturate(splinedist * sqr(spline.terrain_modifier_amount))));
+						}
+
+						heights_padded[coord.x][coord.y] = height;
+					});
+					wi::jobsystem::Wait(ctx);
+
+					wi::jobsystem::Dispatch(ctx, vertexCount, chunk_width * 4, [&](wi::jobsystem::JobArgs args) {
+						const uint32_t index = args.jobIndex;
+						const XMUINT2 coord = XMUINT2(index % chunk_width, index / chunk_width);
+						const float x = (float(coord.x) - chunk_half_width) * chunk_scale;
+						const float z = (float(coord.y) - chunk_half_width) * chunk_scale;
+						const float height = heights_padded[coord.x][coord.y];
+						const XMVECTOR corners[3] = {
+							XMVectorSet(chunk_data.position.x + x, height, chunk_data.position.z + z, 0),
+							XMVectorSet(chunk_data.position.x + x + 1, heights_padded[coord.x + 1][coord.y], chunk_data.position.z + z, 0),
+							XMVectorSet(chunk_data.position.x + x, heights_padded[coord.x][coord.y + 1], chunk_data.position.z + z + 1, 0),
+						};
 						const XMVECTOR T = XMVectorSubtract(corners[1], corners[2]);
 						const XMVECTOR B = XMVectorSubtract(corners[0], corners[1]);
 						const XMVECTOR N = XMVector3Normalize(XMVector3Cross(T, B));
@@ -1006,7 +1056,8 @@ namespace wi::terrain
 						{
 							grass.vertex_lengths[index] = 0;
 						}
-						});
+						chunk_data.heightmap_data[index] = uint16_t(inverse_lerp(bottomLevel, topLevel, height) * 65535);
+					});
 					wi::jobsystem::Wait(ctx); // wait until chunk's vertex buffer is fully generated
 					
 					object.SetCastShadow(slope_cast_shadow.load());
@@ -1031,8 +1082,6 @@ namespace wi::terrain
 						chunk_data.grass.CreateFromMesh(mesh);
 					}
 
-					wi::jobsystem::Wait(ctx); // wait until mesh.CreateRenderData() async task finishes
-
 					// Create the textures for virtual texture update:
 					CreateChunkRegionTexture(chunk_data);
 
@@ -1047,6 +1096,8 @@ namespace wi::terrain
 						//newrigidbody.mesh_lod = 2;
 						wi::physics::CreateRigidBodyShape(newrigidbody, transform.scale_local, &mesh);
 					}
+
+					wi::jobsystem::Wait(ctx); // wait until mesh.CreateRenderData() async task finishes
 
 					generated_something = true;
 				}
@@ -1094,22 +1145,22 @@ namespace wi::terrain
 							generator->scene.Component_Attach(chunk_data.props_entity, chunk_data.entity, true);
 							chunk_data.prop_density_current = prop_density;
 
-							wi::random::RNG rng((uint32_t)chunk.compute_hash() ^ seed);
+							wi::random::RNG rng(chunk.compute_hash());
 
 							for (const auto& prop : props)
 							{
 								if (prop.data.empty())
 									continue;
-								int gen_count = (int)rng.next_uint(
+								const int gen_count = (int)rng.next_uint(
 									uint32_t(prop.min_count_per_chunk * chunk_data.prop_density_current),
 									std::max(1u, uint32_t(prop.max_count_per_chunk * chunk_data.prop_density_current))
 								);
 								for (int i = 0; i < gen_count; ++i)
 								{
-									uint32_t tri = rng.next_uint(0, chunk_indices().lods[0].indexCount / 3); // random triangle on the chunk mesh
-									uint32_t ind0 = chunk_indices().indices[tri * 3 + 0];
-									uint32_t ind1 = chunk_indices().indices[tri * 3 + 1];
-									uint32_t ind2 = chunk_indices().indices[tri * 3 + 2];
+									const uint32_t tri = rng.next_uint(0, chunk_indices().lods[0].indexCount / 3); // random triangle on the chunk mesh
+									const uint32_t ind0 = chunk_indices().indices[tri * 3 + 0];
+									const uint32_t ind1 = chunk_indices().indices[tri * 3 + 1];
+									const uint32_t ind2 = chunk_indices().indices[tri * 3 + 2];
 									const XMFLOAT3& pos0 = chunk_data.mesh_vertex_positions[ind0];
 									const XMFLOAT3& pos1 = chunk_data.mesh_vertex_positions[ind1];
 									const XMFLOAT3& pos2 = chunk_data.mesh_vertex_positions[ind2];
@@ -1127,15 +1178,17 @@ namespace wi::terrain
 										f = 1 - f;
 										g = 1 - g;
 									}
-									XMFLOAT3 vertex_pos;
-									vertex_pos.x = pos0.x + f * (pos1.x - pos0.x) + g * (pos2.x - pos0.x);
-									vertex_pos.y = pos0.y + f * (pos1.y - pos0.y) + g * (pos2.y - pos0.y);
-									vertex_pos.z = pos0.z + f * (pos1.z - pos0.z) + g * (pos2.z - pos0.z);
-									XMFLOAT4 region;
-									region.x = region0.x + f * (region1.x - region0.x) + g * (region2.x - region0.x);
-									region.y = region0.y + f * (region1.y - region0.y) + g * (region2.y - region0.y);
-									region.z = region0.z + f * (region1.z - region0.z) + g * (region2.z - region0.z);
-									region.w = region0.w + f * (region1.w - region0.w) + g * (region2.w - region0.w);
+									const XMFLOAT3 vertex_pos = XMFLOAT3(
+										pos0.x + f * (pos1.x - pos0.x) + g * (pos2.x - pos0.x),
+										pos0.y + f * (pos1.y - pos0.y) + g * (pos2.y - pos0.y),
+										pos0.z + f * (pos1.z - pos0.z) + g * (pos2.z - pos0.z)
+									);
+									const XMFLOAT4 region = XMFLOAT4(
+										region0.x + f * (region1.x - region0.x) + g * (region2.x - region0.x),
+										region0.y + f * (region1.y - region0.y) + g * (region2.y - region0.y),
+										region0.z + f * (region1.z - region0.z) + g * (region2.z - region0.z),
+										region0.w + f * (region1.w - region0.w) + g * (region2.w - region0.w)
+									);
 
 									const float noise = std::pow(perlin_noise.compute((vertex_pos.x + chunk_data.position.x) * prop.noise_frequency, vertex_pos.y * prop.noise_frequency, (vertex_pos.z + chunk_data.position.z) * prop.noise_frequency) * 0.5f + 0.5f, prop.noise_power);
 									const float chance = std::pow(((float*)&region)[prop.region], prop.region_power) * noise;

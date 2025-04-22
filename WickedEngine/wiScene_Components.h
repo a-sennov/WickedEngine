@@ -78,6 +78,7 @@ namespace wi::scene
 		XMVECTOR GetForwardV() const;
 		XMVECTOR GetUpV() const;
 		XMVECTOR GetRightV() const;
+		void GetPositionRotationScale(XMFLOAT3& position, XMFLOAT4& rotation, XMFLOAT3& scale) const;
 		// Computes the local space matrix from scale, rotation, translation and returns it
 		XMMATRIX GetLocalMatrix() const;
 		// Returns the stored world matrix that was computed the last time UpdateTransform() was called
@@ -415,7 +416,7 @@ namespace wi::scene
 			HEIGHTFIELD,
 			ENUM_FORCE_UINT32 = 0xFFFFFFFF
 		};
-		CollisionShape shape;
+		CollisionShape shape = BOX;
 		float mass = 1.0f; // Set to 0 to make body static
 		float friction = 0.2f;
 		float restitution = 0.1f;
@@ -522,6 +523,108 @@ namespace wi::scene
 
 		constexpr void SetRefreshParametersNeeded(bool value = true) { if (value) { _flags |= REFRESH_PARAMETERS_REQUEST; } else { _flags &= ~REFRESH_PARAMETERS_REQUEST; } }
 		constexpr bool IsRefreshParametersNeeded() const { return _flags & REFRESH_PARAMETERS_REQUEST; }
+
+		void Serialize(wi::Archive& archive, wi::ecs::EntitySerializer& seri);
+	};
+
+	struct PhysicsConstraintComponent
+	{
+		enum FLAGS
+		{
+			EMPTY = 0,
+			REFRESH_PARAMETERS_REQUEST = 1 << 0,
+			DISABLE_SELF_COLLISION = 1 << 1,
+		};
+		uint32_t _flags = EMPTY;
+
+		// Note: the constraint axes are taken from the TransformComponent on the constraint's entity
+		//	RIGHT axis means X axis in the default orientation
+		//	UP axis means Y axis in the default orientation
+		//
+		//	The constraints are created in world space from the current TransformComponent orientation
+		//	To issue recreation of the constraint, reset the physicsobject pointer of this structure
+		//	To only refresh cosntraint settings without recreating the constraint, use SetRefreshParametersNeeded(true)
+		enum class Type
+		{
+			Fixed,		// fixed in place completely
+			Point,		// fixed to a point but can rotate around it
+			Distance,	// point constraint within specified distance
+			Hinge,		// rotation around a point on the UP axis of the contraint transform
+			Cone,		// constrain to a cone shape specified by the cone angle (cone axis: UP)
+			SixDOF,		// manual specification of axes movement and rotation limits
+			SwingTwist,	// cone (UP axis) + rotational limits
+			Slider,		// constrain on the RIGHT axis between limits
+		} type = Type::Fixed;
+
+		wi::ecs::Entity bodyA = wi::ecs::INVALID_ENTITY;
+		wi::ecs::Entity bodyB = wi::ecs::INVALID_ENTITY;
+
+		struct DistanceConstraintSettings
+		{
+			float min_distance = 0;
+			float max_distance = 0;
+		} distance_constraint;
+
+		struct HingeConstraintSettings
+		{
+			float min_angle = -XM_PI;	// radians
+			float max_angle = XM_PI;	// radians
+			float target_angular_velocity = 0;	// motor
+		} hinge_constraint;
+
+		struct ConeConstraintSettings
+		{
+			float half_cone_angle = 0;	// radians
+		} cone_constraint;
+
+		struct SixDOFConstraintSettings
+		{
+			XMFLOAT3 minTranslationAxes = XMFLOAT3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+			XMFLOAT3 maxTranslationAxes = XMFLOAT3(FLT_MAX, FLT_MAX, FLT_MAX);
+			XMFLOAT3 minRotationAxes = XMFLOAT3(-XM_PI, -XM_PI, -XM_PI);
+			XMFLOAT3 maxRotationAxes = XMFLOAT3(XM_PI, XM_PI, XM_PI);
+
+			void SetFixedX() { minTranslationAxes.x = FLT_MAX; maxTranslationAxes.x = -FLT_MAX; }
+			void SetFreeX() { minTranslationAxes.x = -FLT_MAX; maxTranslationAxes.x = FLT_MAX; }
+			void SetFixedY() { minTranslationAxes.y = FLT_MAX; maxTranslationAxes.y = -FLT_MAX; }
+			void SetFreeY() { minTranslationAxes.y = -FLT_MAX; maxTranslationAxes.y = FLT_MAX; }
+			void SetFixedZ() { minTranslationAxes.z = FLT_MAX; maxTranslationAxes.z = -FLT_MAX; }
+			void SetFreeZ() { minTranslationAxes.z = -FLT_MAX; maxTranslationAxes.z = FLT_MAX; }
+
+			void SetFixedRotationX() { minRotationAxes.x = XM_PI; maxRotationAxes.x = -XM_PI; }
+			void SetFreeRotationX() { minRotationAxes.x = -XM_PI; maxRotationAxes.x = XM_PI; }
+			void SetFixedRotationY() { minRotationAxes.y = XM_PI; maxRotationAxes.y = -XM_PI; }
+			void SetFreeRotationY() { minRotationAxes.y = -XM_PI; maxRotationAxes.y = XM_PI; }
+			void SetFixedRotationZ() { minRotationAxes.z = XM_PI; maxRotationAxes.z = -XM_PI; }
+			void SetFreeRotationZ() { minRotationAxes.z = -XM_PI; maxRotationAxes.z = XM_PI; }
+		} six_dof;
+
+		struct SwingTwistConstraintSettings
+		{
+			float normal_half_cone_angle = 0;	// radians
+			float plane_half_cone_angle = 0;	// radians
+			float min_twist_angle = 0;			// radians [-PI, PI]
+			float max_twist_angle = 0;			// radians [-PI, PI]
+		} swing_twist;
+
+		struct SliderConstraintSettings
+		{
+			float min_limit = -FLT_MAX;
+			float max_limit = FLT_MAX;
+			float target_velocity = 0;	// motor
+			float max_force = 0; // N
+		} slider_constraint;
+
+		// Non-serialized attributes:
+		std::shared_ptr<void> physicsobject = nullptr; // You can set to null to recreate the physics object the next time phsyics system will be running.
+
+		// Request refreshing of constraint settings without recreating the constraint
+		constexpr void SetRefreshParametersNeeded(bool value = true) { if (value) { _flags |= REFRESH_PARAMETERS_REQUEST; } else { _flags &= ~REFRESH_PARAMETERS_REQUEST; } }
+		constexpr bool IsRefreshParametersNeeded() const { return _flags & REFRESH_PARAMETERS_REQUEST; }
+
+		// Enable/disable collision between the two bodies that this constraint targets
+		constexpr void SetDisableSelfCollision(bool value = true) { if (value) { _flags |= DISABLE_SELF_COLLISION; } else { _flags &= ~DISABLE_SELF_COLLISION; } }
+		constexpr bool IsDisableSelfCollision() const { return _flags & DISABLE_SELF_COLLISION; }
 
 		void Serialize(wi::Archive& archive, wi::ecs::EntitySerializer& seri);
 	};
@@ -2431,6 +2534,69 @@ namespace wi::scene
 
 		bool IsCharacterToCharacterCollisionDisabled() const { return _flags & CHARACTER_TO_CHARACTER_COLLISION_DISABLED; }
 		void SetCharacterToCharacterCollisionDisabled(bool value = true) { if (value) { _flags |= CHARACTER_TO_CHARACTER_COLLISION_DISABLED; } else { _flags &= ~CHARACTER_TO_CHARACTER_COLLISION_DISABLED; } }
+
+		void Serialize(wi::Archive& archive, wi::ecs::EntitySerializer& seri);
+	};
+
+	struct SplineComponent
+	{
+		enum FLAGS
+		{
+			NONE = 0,
+			DRAW_ALIGNED = 1 << 0,
+			LOOPED = 1 << 1,
+			DIRTY = 1 << 2,
+		};
+		uint32_t _flags = NONE;
+
+		float width = 1; // overall width multiplier for all nodes (affects mesh generation)
+		float rotation = 0; // rotation of nodes in radians around the spline axis (affects mesh generation)
+		int mesh_generation_subdivision = 0; // increase this above 0 to request mesh generation
+		int mesh_generation_vertical_subdivision = 0; // can create vertically subdivided mesh (corridoor, tunnel, etc. with this)
+		float terrain_modifier_amount = 0; // increase above 0 to affect terrain generation
+
+		wi::vector<wi::ecs::Entity> spline_node_entities;
+
+		// Non-serialized attributes:
+		wi::vector<TransformComponent> spline_node_transforms;
+		wi::vector<float> precomputed_node_distances;
+		float precomputed_total_distance = 0;
+		float prev_width = 1;
+		float prev_rotation = 0;
+		int prev_mesh_generation_subdivision = 0;
+		int prev_mesh_generation_vertical_subdivision = 0;
+		int prev_mesh_generation_nodes = 0;
+		mutable float prev_terrain_modifier_amount = 0;
+		mutable int prev_terrain_generation_nodes = 0;
+		mutable bool dirty_terrain = false;
+		bool prev_looped = false;
+		wi::primitive::AABB aabb;
+
+		// Evaluate an interpolated location on the spline at t which in range [0,1] on the spline
+		//	the result matrix is oriented to look towards the spline direction and face upwards along the spline normal
+		XMMATRIX EvaluateSplineAt(float t) const;
+
+		// Get the closest point on the spline to a point
+		XMVECTOR ClosestPointOnSpline(const XMVECTOR& P, int steps = 10) const;
+
+		// Trace a point on the spline's plane:
+		XMVECTOR TraceSplinePlane(const XMVECTOR& ORIGIN, const XMVECTOR& DIRECTION, int steps = 10) const;
+
+		// Compute the boounding box of the spline iteratively
+		wi::primitive::AABB ComputeAABB(int steps = 10) const;
+
+		// Precompute the spline node distances that will be used at spline evaluation calls
+		void PrecomputeSplineNodeDistances();
+
+		// By default the spline is drawn as camera facing, this can be used to set it to be drawn aligned to segment rotations:
+		bool IsDrawAligned() const { return _flags & DRAW_ALIGNED; }
+		void SetDrawAligned(bool value = true) { if (value) { _flags |= DRAW_ALIGNED; } else { _flags &= ~DRAW_ALIGNED; } }
+
+		bool IsLooped() const { return _flags & LOOPED; }
+		void SetLooped(bool value = true) { if (value) { _flags |= LOOPED; } else { _flags &= ~LOOPED; } }
+
+		bool IsDirty() const { return _flags & DIRTY; }
+		void SetDirty(bool value = true) { if (value) { _flags |= DIRTY; } else { _flags &= ~DIRTY; } }
 
 		void Serialize(wi::Archive& archive, wi::ecs::EntitySerializer& seri);
 	};

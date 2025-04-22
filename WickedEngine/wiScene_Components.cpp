@@ -35,7 +35,7 @@ namespace wi::scene
 
 	XMFLOAT3 TransformComponent::GetPosition() const
 	{
-		return *((XMFLOAT3*)&world._41);
+		return wi::math::GetPosition(world);
 	}
 	XMFLOAT4 TransformComponent::GetRotation() const
 	{
@@ -101,6 +101,14 @@ namespace wi::scene
 	{
 		XMFLOAT3 v = wi::math::GetRight(world);
 		return XMLoadFloat3(&v);
+	}
+	void TransformComponent::GetPositionRotationScale(XMFLOAT3& position, XMFLOAT4& rotation, XMFLOAT3& scale) const
+	{
+		XMVECTOR S, R, T;
+		XMMatrixDecompose(&S, &R, &T, XMLoadFloat4x4(&world));
+		XMStoreFloat3(&position, T);
+		XMStoreFloat4(&rotation, R);
+		XMStoreFloat3(&scale, S);
 	}
 	void TransformComponent::UpdateTransform()
 	{
@@ -2857,5 +2865,254 @@ namespace wi::scene
 	bool CharacterComponent::IsActive() const
 	{
 		return active;
+	}
+
+	XMMATRIX SplineComponent::EvaluateSplineAt(float t) const
+	{
+		// Notes:
+		//	- This function uses the spline_node_transforms which are precomputed before using this by the scene's RunSplineUpdateSystem()
+		//	- it uses _local members of the transforms, but they can be either wlocal or world space, depending on when we use it and what was stored in them at that point
+		//		for example mesh updates will use local spaces, but terrain updates will use world spaces
+		//	- precomputed_node_distances must be updated before this, it is done by RunSplineUpdateSystem()
+		//		this is made to avoid computing distances every time we call this which might be a lot
+
+		if (spline_node_transforms.empty())
+			return {};
+		if (spline_node_transforms.size() == 1)
+			return spline_node_transforms[0].GetWorldMatrix();
+
+		if (spline_node_transforms.size() == 2)
+		{
+			XMVECTOR P0 = XMLoadFloat3(&spline_node_transforms[0].translation_local);
+			XMVECTOR P1 = XMLoadFloat3(&spline_node_transforms[1].translation_local);
+
+			XMVECTOR W0 = XMVectorReplicate(spline_node_transforms[0].scale_local.x);
+			XMVECTOR W1 = XMVectorReplicate(spline_node_transforms[1].scale_local.x);
+
+			XMVECTOR Q0 = XMQuaternionNormalize(XMLoadFloat4(&spline_node_transforms[0].rotation_local));
+			XMVECTOR Q1 = XMQuaternionNormalize(XMLoadFloat4(&spline_node_transforms[1].rotation_local));
+
+			XMVECTOR P = XMVectorLerp(P0, P1, t);
+			XMVECTOR Q = XMQuaternionNormalize(XMQuaternionSlerp(Q0, Q1, t));
+			XMVECTOR W = XMVectorLerp(W0, W1, t);
+			XMVECTOR N = XMVector3Normalize(XMVector3Rotate(XMVectorSet(0, 1, 0, 0), Q));
+			XMVECTOR T = XMVector3Normalize(P1 - P0);
+			XMVECTOR B = XMVector3Normalize(XMVector3Cross(T, N));
+			N = XMVector3Normalize(XMVector3Cross(B, T));
+			B *= XMVectorGetX(W); // width offset
+			N *= XMVectorGetX(W); // width offset
+			N = XMVectorSetW(N, 0);
+			T = XMVectorSetW(T, 0);
+			B = XMVectorSetW(B, 0);
+			P = XMVectorSetW(P, 1);
+			XMMATRIX M = { B, N, T, P };
+			return M;
+		}
+
+		int cnt = (int)spline_node_transforms.size();
+		int first = 0;
+		int second = 1;
+		int beforelast = cnt - 1;
+		if (IsLooped())
+		{
+			first = cnt - 1;
+			second = first + 1;
+			beforelast++;
+		}
+
+		float tdist = t * precomputed_total_distance;
+		int t0 = 0; // prev
+		int t1 = 0; // current
+		int t2 = 1; // next
+		int t3 = 1; // after next
+		float tmid = 0;
+
+		// This is similar to a keyframe search:
+		float total_distance = 0;
+		for (int i = 0; i < beforelast; ++i)
+		{
+			float dist_prev = total_distance;
+			total_distance += precomputed_node_distances[i];
+			if (total_distance >= tdist)
+			{
+				if (IsLooped())
+				{
+					t0 = (i + first - 1) % cnt;
+					t1 = (i + first) % cnt;
+					t2 = (i + second) % cnt;
+					t3 = (i + second + 1) % cnt;
+				}
+				else
+				{
+					t0 = std::max(0, i - 1);
+					t1 = i;
+					t2 = i + 1;
+					t3 = std::min(i + 2, cnt - 1);
+				}
+				tmid = saturate(inverse_lerp(dist_prev, total_distance, tdist));
+				break;
+			}
+		}
+
+		XMVECTOR P0 = XMLoadFloat3(&spline_node_transforms[t0].translation_local);
+		XMVECTOR P1 = XMLoadFloat3(&spline_node_transforms[t1].translation_local);
+		XMVECTOR P2 = XMLoadFloat3(&spline_node_transforms[t2].translation_local);
+		XMVECTOR P3 = XMLoadFloat3(&spline_node_transforms[t3].translation_local);
+
+		if (t1 == t0)
+		{
+			// when P0 == P1, centripetal catmull doesn't work, so we have to do a dummy control point
+			P0 += P1 - P2;
+		}
+		if (t2 == t3)
+		{
+			// when P2 == P3, centripetal catmull doesn't work, so we have to do a dummy control point
+			P3 += P2 - P1;
+		}
+
+		XMVECTOR W0 = XMVectorReplicate(spline_node_transforms[t0].scale_local.x);
+		XMVECTOR W1 = XMVectorReplicate(spline_node_transforms[t1].scale_local.x);
+		XMVECTOR W2 = XMVectorReplicate(spline_node_transforms[t2].scale_local.x);
+		XMVECTOR W3 = XMVectorReplicate(spline_node_transforms[t3].scale_local.x);
+
+		XMVECTOR Q0 = XMQuaternionNormalize(XMLoadFloat4(&spline_node_transforms[t0].rotation_local));
+		XMVECTOR Q1 = XMQuaternionNormalize(XMLoadFloat4(&spline_node_transforms[t1].rotation_local));
+		XMVECTOR Q2 = XMQuaternionNormalize(XMLoadFloat4(&spline_node_transforms[t2].rotation_local));
+		XMVECTOR Q3 = XMQuaternionNormalize(XMLoadFloat4(&spline_node_transforms[t3].rotation_local));
+
+		XMVECTOR P = wi::math::CatmullRomCentripetal(P0, P1, P2, P3, tmid);
+		XMVECTOR P_prev = wi::math::CatmullRomCentripetal(P0, P1, P2, P3, saturate(tmid - 0.01f));
+		XMVECTOR P_next = wi::math::CatmullRomCentripetal(P0, P1, P2, P3, saturate(tmid + 0.01f));
+		XMVECTOR squadA, squadB, squadC;
+		XMQuaternionSquadSetup(&squadA, &squadB, &squadC, Q0, Q1, Q2, Q3);
+		XMVECTOR Q = XMQuaternionNormalize(XMQuaternionSquad(Q1, squadA, squadB, squadC, tmid));
+		XMVECTOR W = XMVectorCatmullRom(W0, W1, W2, W3, tmid);
+		XMVECTOR N = XMVector3Normalize(XMVector3Rotate(XMVectorSet(0, 1, 0, 0), Q));
+		XMVECTOR T = XMVector3Normalize(P_next - P_prev);
+		XMVECTOR B = XMVector3Normalize(XMVector3Cross(T, N));
+		N = XMVector3Normalize(XMVector3Cross(B, T));
+		B *= XMVectorGetX(W); // width offset
+		N *= XMVectorGetX(W); // width offset
+		N = XMVectorSetW(N, 0);
+		T = XMVectorSetW(T, 0);
+		B = XMVectorSetW(B, 0);
+		P = XMVectorSetW(P, 1);
+		XMMATRIX M = { B, N, T, P };
+		return M;
+	}
+	XMVECTOR SplineComponent::ClosestPointOnSpline(const XMVECTOR& P, int steps) const
+	{
+		if (spline_node_transforms.empty())
+			return XMVectorZero();
+		if (spline_node_transforms.size() == 1)
+			return XMLoadFloat3(&spline_node_transforms[0].translation_local);
+
+		steps *= (int)spline_node_transforms.size();
+		float mindist = FLT_MAX;
+		XMVECTOR MIN = XMVectorZero();
+		XMVECTOR A = wi::math::GetPosition(EvaluateSplineAt(0.0f));
+		for (int i = 1; i < steps; ++i)
+		{
+			const float t = float(i) / float(steps - 1);
+			const XMMATRIX M = EvaluateSplineAt(t);
+			XMVECTOR R = wi::math::GetRight(M);
+			float nodewidth = XMVectorGetX(XMVector3Length(R));
+			nodewidth *= width;
+			R = XMVector3Normalize(R) * nodewidth;
+			const XMVECTOR B = wi::math::GetPosition(M);
+			XMVECTOR C = wi::math::ClosestPointOnLineSegment(A, B, P); // point on spline center
+			C = wi::math::ClosestPointOnLineSegment(C - R, C + R, P); // extruded segment by spline width
+			const float dist = wi::math::Distance(P, C);
+			if (dist < mindist)
+			{
+				mindist = dist;
+				MIN = C;
+			}
+			A = B;
+		}
+
+		return MIN;
+	}
+	XMVECTOR SplineComponent::TraceSplinePlane(const XMVECTOR& ORIGIN, const XMVECTOR& DIRECTION, int steps) const
+	{
+		if (spline_node_transforms.empty())
+			return XMVectorZero();
+		if (spline_node_transforms.size() == 1)
+			return XMVectorZero();
+
+		steps *= (int)spline_node_transforms.size();
+		float mindist = FLT_MAX;
+		XMVECTOR MIN = XMVectorZero();
+		for (int i = 0; i < steps; ++i)
+		{
+			const float t = float(i) / float(steps - 1);
+			const XMMATRIX M = EvaluateSplineAt(t);
+			const XMVECTOR P = wi::math::GetPosition(M);
+			const XMVECTOR N = wi::math::GetUp(M);
+			const XMVECTOR PLANE = XMPlaneFromPointNormal(P, N);
+			const XMVECTOR I = XMPlaneIntersectLine(PLANE, ORIGIN, ORIGIN + DIRECTION * 100000);
+			const float dist = wi::math::Distance(P, I);
+			if (dist < mindist)
+			{
+				mindist = dist;
+				MIN = I;
+			}
+		}
+
+		return MIN;
+	}
+	AABB SplineComponent::ComputeAABB(int steps) const
+	{
+		AABB ret;
+		float rangemod = width;
+		if (terrain_modifier_amount > 0)
+		{
+			rangemod /= sqr(terrain_modifier_amount); // sqr is used to match with distance falloff used in terrain generation
+		}
+		steps *= (int)spline_node_transforms.size();
+		for (int i = 0; i < steps; ++i)
+		{
+			const float t = float(i) / float(steps - 1);
+			const XMMATRIX M = EvaluateSplineAt(t);
+			const float nodewidth = XMVectorGetX(XMVector3Length(wi::math::GetRight(M)));
+			const float range = nodewidth * rangemod;
+			const XMVECTOR P = wi::math::GetPosition(M);
+			const XMVECTOR R = XMVector3Normalize(wi::math::GetRight(M)) * range;
+			const XMVECTOR N = XMVector3Normalize(wi::math::GetUp(M)) * range;
+			const XMVECTOR F = XMVector3Normalize(wi::math::GetForward(M)) * range;
+			ret.AddPoint(P - R);
+			ret.AddPoint(P + R);
+			ret.AddPoint(P - N);
+			ret.AddPoint(P + N);
+			ret.AddPoint(P + F);
+			ret.AddPoint(P - F);
+		}
+		return ret;
+	}
+	void SplineComponent::PrecomputeSplineNodeDistances()
+	{
+		if (spline_node_transforms.empty())
+			return;
+		precomputed_node_distances.resize(spline_node_transforms.size());
+		int cnt = (int)spline_node_transforms.size();
+		int first = 0;
+		int second = 1;
+		int beforelast = cnt - 1;
+		if (IsLooped())
+		{
+			first = cnt - 1;
+			second = first + 1;
+			beforelast++;
+		}
+
+		precomputed_total_distance = 0;
+		for (int i = 0; i < beforelast; ++i)
+		{
+			const XMFLOAT3& pos0 = spline_node_transforms[(i + first) % cnt].translation_local;
+			const XMFLOAT3& pos1 = spline_node_transforms[(i + second) % cnt].translation_local;
+			const float distance = wi::math::Distance(pos0, pos1);
+			precomputed_total_distance += distance;
+			precomputed_node_distances[i] = distance;
+		}
 	}
 }

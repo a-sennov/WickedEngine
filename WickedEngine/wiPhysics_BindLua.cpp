@@ -19,6 +19,8 @@ namespace wi::lua
 		lunamethod(Physics_BindLua, GetAccuracy),
 		lunamethod(Physics_BindLua, SetFrameRate),
 		lunamethod(Physics_BindLua, GetFrameRate),
+		lunamethod(Physics_BindLua, SetPosition),
+		lunamethod(Physics_BindLua, SetPositionAndRotation),
 		lunamethod(Physics_BindLua, SetLinearVelocity),
 		lunamethod(Physics_BindLua, SetAngularVelocity),
 		lunamethod(Physics_BindLua, ApplyForceAt),
@@ -31,6 +33,7 @@ namespace wi::lua
 		lunamethod(Physics_BindLua, ActivateAllRigidBodies),
 		lunamethod(Physics_BindLua, ResetPhysicsObjects),
 		lunamethod(Physics_BindLua, GetVelocity),
+		lunamethod(Physics_BindLua, SetGhostMode),
 		lunamethod(Physics_BindLua, SetRagdollGhostMode),
 		lunamethod(Physics_BindLua, Intersects),
 		lunamethod(Physics_BindLua, PickDrag),
@@ -140,6 +143,65 @@ namespace wi::lua
 		return 1;
 	}
 
+	int Physics_BindLua::SetPosition(lua_State* L)
+	{
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc > 1)
+		{
+			scene::RigidBodyPhysicsComponent_BindLua* component = Luna<scene::RigidBodyPhysicsComponent_BindLua>::lightcheck(L, 1);
+			if (component == nullptr)
+			{
+				wi::lua::SError(L, "SetPosition(RigidBodyPhysicsComponent component, Vector position) first argument is not a RigidBodyPhysicsComponent!");
+				return 0;
+			}
+			Vector_BindLua* vec = Luna<Vector_BindLua>::lightcheck(L, 2);
+			if (vec == nullptr)
+			{
+				wi::lua::SError(L, "SetPosition(RigidBodyPhysicsComponent component, Vector position) second argument is not a Vector!");
+				return 0;
+			}
+			wi::physics::SetPosition(
+				*component->component,
+				*(XMFLOAT3*)vec
+			);
+		}
+		else
+			wi::lua::SError(L, "SetPosition(RigidBodyPhysicsComponent component, Vector position) not enough arguments!");
+		return 0;
+	}
+	int Physics_BindLua::SetPositionAndRotation(lua_State* L)
+	{
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc > 2)
+		{
+			scene::RigidBodyPhysicsComponent_BindLua* component = Luna<scene::RigidBodyPhysicsComponent_BindLua>::lightcheck(L, 1);
+			if (component == nullptr)
+			{
+				wi::lua::SError(L, "SetPositionAndRotation(RigidBodyPhysicsComponent component, Vector position, Vector rotationQuaternion) first argument is not a RigidBodyPhysicsComponent!");
+				return 0;
+			}
+			Vector_BindLua* vec = Luna<Vector_BindLua>::lightcheck(L, 2);
+			if (vec == nullptr)
+			{
+				wi::lua::SError(L, "SetPositionAndRotation(RigidBodyPhysicsComponent component, Vector position, Vector rotationQuaternion) second argument is not a Vector!");
+				return 0;
+			}
+			Vector_BindLua* vec2 = Luna<Vector_BindLua>::lightcheck(L, 3);
+			if (vec2 == nullptr)
+			{
+				wi::lua::SError(L, "SetPositionAndRotation(RigidBodyPhysicsComponent component, Vector position, Vector rotationQuaternion) third argument is not a Vector!");
+				return 0;
+			}
+			wi::physics::SetPositionAndRotation(
+				*component->component,
+				vec->GetFloat3(),
+				vec2->data
+			);
+		}
+		else
+			wi::lua::SError(L, "SetPositionAndRotation(RigidBodyPhysicsComponent component, Vector position, Vector rotationQuaternion) not enough arguments!");
+		return 0;
+	}
 	int Physics_BindLua::SetLinearVelocity(lua_State* L)
 	{
 		int argc = wi::lua::SGetArgCount(L);
@@ -474,6 +536,30 @@ namespace wi::lua
 		}
 		else
 			wi::lua::SError(L, "GetVelocity(RigidBodyPhysicsComponent component) not enough arguments!");
+		return 0;
+	}
+	int Physics_BindLua::SetGhostMode(lua_State* L)
+	{
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc > 1)
+		{
+			scene::RigidBodyPhysicsComponent_BindLua* component = Luna<scene::RigidBodyPhysicsComponent_BindLua>::lightcheck(L, 1);
+			if (component != nullptr)
+			{
+				bool value = wi::lua::SGetBool(L, 2);
+				wi::physics::SetGhostMode(*component->component, value);
+				return 0;
+			}
+			scene::HumanoidComponent_BindLua* humanoidcomponent = Luna<scene::HumanoidComponent_BindLua>::lightcheck(L, 1);
+			if (humanoidcomponent != nullptr)
+			{
+				bool value = wi::lua::SGetBool(L, 2);
+				wi::physics::SetGhostMode(*humanoidcomponent->component, value);
+				return 0;
+			}
+		}
+		else
+			wi::lua::SError(L, "SetGhostMode(RigidBodyPhysicsComponent|HumanoidComponent component, bool value) not enough arguments!");
 		return 0;
 	}
 	int Physics_BindLua::SetRagdollGhostMode(lua_State* L)

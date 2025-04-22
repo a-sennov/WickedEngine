@@ -4,6 +4,7 @@
 // This is a helper include file pasted into all engine headers, try to keep it minimal!
 // Do not include engine features in this file!
 
+#include <cfloat>
 #include <cstdint>
 #include <type_traits>
 
@@ -17,6 +18,9 @@
 
 template <typename T>
 constexpr T sqr(T x) { return x * x; }
+
+template <typename T>
+constexpr T pow4(T x) { return x * x * x * x; }
 
 template <typename T>
 constexpr T clamp(T x, T a, T b)
@@ -64,6 +68,21 @@ constexpr float bilinear(float4 gather, float2 pixel_frac)
 	const float bottom_row = lerp(gather.x, gather.y, pixel_frac.x);
 	return lerp(top_row, bottom_row, pixel_frac.y);
 }
+
+// Stack allocated string utility:
+template <unsigned capacity = 256>
+struct StackString
+{
+	char chars[capacity] = {};
+	unsigned cnt = 0;
+	static_assert(capacity > 1);
+	constexpr operator const char* () const { return chars; }
+	constexpr const char* const c_str() const { return chars; }
+	constexpr void push_back(const char* str) { while (*str != 0 && (cnt < (capacity - 1))) { chars[cnt++] = *str; str++; } }
+	constexpr unsigned size() const { return capacity; }
+	constexpr unsigned length() const { return cnt; }
+	constexpr bool empty() const { return cnt == 0; }
+};
 
 // CPU intrinsics:
 #if defined(_WIN32)
@@ -345,17 +364,8 @@ constexpr const char* relative_path(const char* path)
 // Extract function name from a string at compile-time
 constexpr auto extract_function_name(const char* str)
 {
-	struct ReturnString
-	{
-		char chars[256] = {};
-		constexpr operator const char* () const { return chars; }
-		constexpr const char* const c_str() const { return chars; }
-	} ret;
-	int i = 0;
-	for (const char* currentCharacter = str; *currentCharacter != '\0' && *currentCharacter != '(' && (i < sizeof(ret.chars) - 1); ++currentCharacter)
-	{
-		ret.chars[i++] = *currentCharacter;
-	}
+	StackString ret;
+	ret.push_back(str);
 	return ret;
 }
 

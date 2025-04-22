@@ -9,6 +9,8 @@
 // In this case, DirectXMath is coming from Windows SDK.
 //	It is better to use this on Windows as some Windows libraries could depend on the same
 //	DirectXMath headers
+#define _XM_F16C_INTRINSICS_
+#define _XM_FMA3_INTRINSICS_
 #include <DirectXMath.h>
 #include <DirectXPackedVector.h>
 #include <DirectXCollision.h>
@@ -109,6 +111,16 @@ namespace wi::math
 		XMVECTOR vector1 = XMLoadFloat3(&v1);
 		XMVECTOR vector2 = XMLoadFloat3(&v2);
 		return DistanceSquared(vector1, vector2);
+	}
+	inline float DistanceSquared(const XMVECTOR& v1, const XMFLOAT3& v2)
+	{
+		XMVECTOR vector2 = XMLoadFloat3(&v2);
+		return DistanceSquared(v1, vector2);
+	}
+	inline float DistanceSquared(const XMFLOAT3& v1, const XMVECTOR& v2)
+	{
+		XMVECTOR vector1 = XMLoadFloat3(&v1);
+		return DistanceSquared(vector1, v2);
 	}
 	inline float DistanceEstimated(const XMFLOAT2& v1, const XMFLOAT2& v2)
 	{
@@ -399,7 +411,6 @@ namespace wi::math
 
 	XMFLOAT3 QuaternionToRollPitchYaw(const XMFLOAT4& quaternion);
 
-	XMVECTOR GetClosestPointToLine(const XMVECTOR& A, const XMVECTOR& B, const XMVECTOR& P, bool segmentClamp = false);
 	float GetPointSegmentDistance(const XMVECTOR& point, const XMVECTOR& segmentA, const XMVECTOR& segmentB);
 
 	inline float GetPlanePointDistance(const XMVECTOR& planeOrigin, const XMVECTOR& planeNormal, const XMVECTOR& point)
@@ -417,6 +428,10 @@ namespace wi::math
 	void ConstructTriangleEquilateral(float radius, XMFLOAT4& A, XMFLOAT4& B, XMFLOAT4& C);
 	void GetBarycentric(const XMVECTOR& p, const XMVECTOR& a, const XMVECTOR& b, const XMVECTOR& c, float &u, float &v, float &w, bool clamp = false);
 
+	inline XMFLOAT3 GetPosition(const XMFLOAT4X4& _m)
+	{
+		return *((XMFLOAT3*)&_m._41);
+	}
 	inline XMFLOAT3 GetForward(const XMFLOAT4X4& _m)
 	{
 		return XMFLOAT3(_m.m[2][0], _m.m[2][1], _m.m[2][2]);
@@ -428,6 +443,35 @@ namespace wi::math
 	inline XMFLOAT3 GetRight(const XMFLOAT4X4& _m)
 	{
 		return XMFLOAT3(_m.m[0][0], _m.m[0][1], _m.m[0][2]);
+	}
+
+	inline XMVECTOR GetPosition(const XMMATRIX& M)
+	{
+		XMFLOAT4X4 _m;
+		XMStoreFloat4x4(&_m, M);
+		XMFLOAT3 ret = GetPosition(_m);
+		return XMLoadFloat3(&ret);
+	}
+	inline XMVECTOR GetForward(const XMMATRIX& M)
+	{
+		XMFLOAT4X4 _m;
+		XMStoreFloat4x4(&_m, M);
+		XMFLOAT3 ret = GetForward(_m);
+		return XMLoadFloat3(&ret);
+	}
+	inline XMVECTOR GetUp(const XMMATRIX& M)
+	{
+		XMFLOAT4X4 _m;
+		XMStoreFloat4x4(&_m, M);
+		XMFLOAT3 ret = GetUp(_m);
+		return XMLoadFloat3(&ret);
+	}
+	inline XMVECTOR GetRight(const XMMATRIX& M)
+	{
+		XMFLOAT4X4 _m;
+		XMStoreFloat4x4(&_m, M);
+		XMFLOAT3 ret = GetRight(_m);
+		return XMLoadFloat3(&ret);
 	}
 
 	// Returns an element of a precomputed halton sequence. Specify which iteration to get with idx >= 0

@@ -206,6 +206,7 @@ namespace wi::graphics
 			bool sparse_binding_supported = false;
 			std::shared_ptr<std::mutex> locker;
 
+			void clear();
 			void signal(VkSemaphore semaphore);
 			void wait(VkSemaphore semaphore);
 			void submit(GraphicsDevice_Vulkan* device, VkFence fence);
@@ -224,10 +225,7 @@ namespace wi::graphics
 			{
 				VkCommandPool transferCommandPool = VK_NULL_HANDLE;
 				VkCommandBuffer transferCommandBuffer = VK_NULL_HANDLE;
-				VkCommandPool transitionCommandPool = VK_NULL_HANDLE;
-				VkCommandBuffer transitionCommandBuffer = VK_NULL_HANDLE;
 				VkFence fence = VK_NULL_HANDLE;
-				VkSemaphore semaphore = VK_NULL_HANDLE;
 				GPUBuffer uploadbuffer;
 				constexpr bool IsValid() const { return transferCommandBuffer != VK_NULL_HANDLE; }
 			};
@@ -239,6 +237,18 @@ namespace wi::graphics
 			void submit(CopyCMD cmd);
 		};
 		mutable CopyAllocator copyAllocator;
+
+		// Resource init transition helper:
+		mutable std::mutex transitionLocker;
+		mutable wi::vector<VkImageMemoryBarrier2> init_transitions;
+		struct TransitionHandler
+		{
+			VkCommandPool commandPool = VK_NULL_HANDLE;
+			VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+			VkSemaphore semaphores[QUEUE_COUNT - 1] = {}; // for each queue except graphics
+		};
+		TransitionHandler transition_handlers[BUFFERCOUNT];
+		inline TransitionHandler& GetTransitionHandler() { return transition_handlers[GetBufferIndex()]; }
 
 		VkFence frame_fence[BUFFERCOUNT][QUEUE_COUNT] = {};
 

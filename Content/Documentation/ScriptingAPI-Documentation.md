@@ -161,6 +161,7 @@ You can use the Renderer with the following functions, all of which are in the g
 - SetCapsuleShadowEnabled(bool enabled)
 - SetCapsuleShadowFade(float value)
 - SetCapsuleShadowAngle(float value)
+- SetShadowLODOverrideEnabled(bool value)
 - SetTemporalAAEnabled(bool value)
 - SetRaytracedShadowsEnabled(bool value)
 - SetMeshShaderAllowed(bool enabled)
@@ -2089,7 +2090,10 @@ Playstation button codes:
 - SetFrameRate(float value)	-- Set the frames per second resolution of physics simulation (default = 120 FPS)
 - GetFrameRate() : float
 - GetVelocity() : Vector-- returns linear velocity of a body
+- SetGhostMode(RigidBodyPhysicsComponent|HumanoidComponent component, bool value)	-- enable/disable ghost mode for rigid body or ragdoll (all collision disabled)
 - SetRagdollGhostMode(HumanoidComponent humanoid, bool value)	-- enable/disable ghost mode for a ragdoll. In ghost mode, the ragdoll will not collide with anything. Enable this if the humanoid sits inside a vehicle for example.
+- SetPosition(RigidBodyPhysicsComponent component, Vector position)	-- teleport a dynamic body
+- SetPositionAndRotation(RigidBodyPhysicsComponent component, Vector position, Vector rotationQuaternion)	-- teleport a dynamic body
 - SetLinearVelocity(RigidBodyPhysicsComponent component, Vector velocity)	-- Set the linear velocity manually
 - SetAngularVelocity(RigidBodyPhysicsComponent component, Vector velocity)	-- Set the angular velocity manually
 - ApplyForce(RigidBodyPhysicsComponent component, Vector force)	-- Apply force at body center
@@ -2171,8 +2175,8 @@ Path finding operations can be made by using a voxel grid and path queries. The 
 
 ### TrailRenderer
 - [constructor] TrailRenderer()
-- AddPoint(Vector pos, opt float width = 1, opt Vector color = Vector(1,1,1,1)) -- adds a new point to the trail
-- Cut() -- cuts the trail at last point and starts a new trail
+- AddPoint(Vector pos, opt float width = 1, opt Vector color = Vector(1,1,1,1), opt Vector rotationQuaternion = Vector()) -- adds a new point to the trail. Note: if rotation is not specified, then point will be camera facing, otherwise UP direction will be rotated
+- Cut(opt bool loop = false) -- cuts the trail at last point and starts a new trail. You can specify that this cut will create a loop of the previously added points.
 - Fade(float amount)	-- Applies fade for the whole trail continuously, and removes segments that can be removed due to faded
 - Clear() -- removes all points and cuts from the trail
 - GetPointCount() : int -- returns the number of points in the trail
@@ -2194,3 +2198,4 @@ Path finding operations can be made by using a voxel grid and path queries. The 
 - GetTexMulAdd() : Texture
 - SetTexMulAdd2(Texture tex) -- set the texture2 UV tiling multiply-add value of the whole trail
 - GetTexMulAdd2() : Texture
+- SetDepthSoften(float value)	-- sets the depth soften amount (default = 10)

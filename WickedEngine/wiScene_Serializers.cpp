@@ -909,6 +909,89 @@ namespace wi::scene
 			}
 		}
 	}
+	void PhysicsConstraintComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
+	{
+		if (archive.IsReadMode())
+		{
+			archive >> _flags;
+			archive >> (uint32_t&)type;
+			SerializeEntity(archive, bodyA, seri);
+			SerializeEntity(archive, bodyB, seri);
+			archive >> distance_constraint.min_distance;
+			archive >> distance_constraint.max_distance;
+			archive >> hinge_constraint.min_angle;
+			archive >> hinge_constraint.max_angle;
+			archive >> cone_constraint.half_cone_angle;
+			if (seri.GetVersion() >= 1)
+			{
+				archive >> six_dof.minTranslationAxes;
+				archive >> six_dof.maxTranslationAxes;
+				archive >> six_dof.minRotationAxes;
+				archive >> six_dof.maxRotationAxes;
+			}
+			if (seri.GetVersion() >= 2)
+			{
+				archive >> swing_twist.normal_half_cone_angle;
+				archive >> swing_twist.plane_half_cone_angle;
+				archive >> swing_twist.min_twist_angle;
+				archive >> swing_twist.max_twist_angle;
+			}
+			if (seri.GetVersion() >= 3)
+			{
+				archive >> hinge_constraint.target_angular_velocity;
+			}
+			if (seri.GetVersion() >= 4)
+			{
+				archive >> slider_constraint.min_limit;
+				archive >> slider_constraint.max_limit;
+			}
+			if (seri.GetVersion() >= 5)
+			{
+				archive >> slider_constraint.target_velocity;
+				archive >> slider_constraint.max_force;
+			}
+		}
+		else
+		{
+			archive << _flags;
+			archive << (uint32_t&)type;
+			SerializeEntity(archive, bodyA, seri);
+			SerializeEntity(archive, bodyB, seri);
+			archive << distance_constraint.min_distance;
+			archive << distance_constraint.max_distance;
+			archive << hinge_constraint.min_angle;
+			archive << hinge_constraint.max_angle;
+			archive << cone_constraint.half_cone_angle;
+			if (seri.GetVersion() >= 1)
+			{
+				archive << six_dof.minTranslationAxes;
+				archive << six_dof.maxTranslationAxes;
+				archive << six_dof.minRotationAxes;
+				archive << six_dof.maxRotationAxes;
+			}
+			if (seri.GetVersion() >= 2)
+			{
+				archive << swing_twist.normal_half_cone_angle;
+				archive << swing_twist.plane_half_cone_angle;
+				archive << swing_twist.min_twist_angle;
+				archive << swing_twist.max_twist_angle;
+			}
+			if (seri.GetVersion() >= 3)
+			{
+				archive << hinge_constraint.target_angular_velocity;
+			}
+			if (seri.GetVersion() >= 4)
+			{
+				archive << slider_constraint.min_limit;
+				archive << slider_constraint.max_limit;
+			}
+			if (seri.GetVersion() >= 5)
+			{
+				archive << slider_constraint.target_velocity;
+				archive << slider_constraint.max_force;
+			}
+		}
+	}
 	void SoftBodyPhysicsComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
 	{
 		wi::vector<uint32_t> graphicsToPhysicsVertexMapping;
@@ -2410,6 +2493,49 @@ namespace wi::scene
 			archive << width;
 			archive << height;
 			archive << scale;
+		}
+	}
+	void SplineComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
+	{
+		if (archive.IsReadMode())
+		{
+			archive >> _flags;
+			archive >> width;
+			archive >> rotation;
+			archive >> mesh_generation_vertical_subdivision;
+			archive >> mesh_generation_subdivision;
+
+			size_t node_count = 0;
+			archive >> node_count;
+			spline_node_entities.resize(node_count);
+			for (size_t i = 0; i < node_count; ++i)
+			{
+				SerializeEntity(archive, spline_node_entities[i], seri);
+			}
+
+			if (seri.GetVersion() >= 1)
+			{
+				archive >> terrain_modifier_amount;
+			}
+		}
+		else
+		{
+			archive << _flags;
+			archive << width;
+			archive << rotation;
+			archive << mesh_generation_vertical_subdivision;
+			archive << mesh_generation_subdivision;
+
+			archive << spline_node_entities.size();
+			for (size_t i = 0; i < spline_node_entities.size(); ++i)
+			{
+				SerializeEntity(archive, spline_node_entities[i], seri);
+			}
+
+			if (seri.GetVersion() >= 1)
+			{
+				archive << terrain_modifier_amount;
+			}
 		}
 	}
 

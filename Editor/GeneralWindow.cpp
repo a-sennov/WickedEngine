@@ -33,6 +33,7 @@ void GeneralWindow::Create(EditorComponent* _editor)
 	physicsDebugCheckBox.OnClick([=](wi::gui::EventArgs args) {
 		wi::physics::SetDebugDrawEnabled(args.bValue);
 		editor->componentsWnd.rigidWnd.physicsDebugCheckBox.SetCheck(args.bValue);
+		editor->componentsWnd.constraintWnd.physicsDebugCheckBox.SetCheck(args.bValue);
 	});
 	physicsDebugCheckBox.SetCheck(wi::physics::IsDebugDrawEnabled());
 	AddWidget(&physicsDebugCheckBox);
@@ -124,6 +125,11 @@ void GeneralWindow::Create(EditorComponent* _editor)
 		});
 	springVisCheckBox.SetCheck(wi::renderer::GetToDrawDebugSprings());
 	AddWidget(&springVisCheckBox);
+
+	splineVisCheckBox.Create(ICON_SPLINE " Spline visualizer: ");
+	splineVisCheckBox.SetTooltip("Toggle visualization of splines in the scene");
+	splineVisCheckBox.SetCheck(true);
+	AddWidget(&splineVisCheckBox);
 
 	gridHelperCheckBox.Create("Grid helper: ");
 	gridHelperCheckBox.SetTooltip("Toggle showing of unit visualizer grid in the world origin");
@@ -663,6 +669,12 @@ void GeneralWindow::Create(EditorComponent* _editor)
 			ktxConvButton.sprites[i].params.corners_rounding[2].radius = 8;
 			ktxConvButton.sprites[i].params.corners_rounding[3].radius = 8;
 
+			duplicateCollidersButton.sprites[i].params.enableCornerRounding();
+			duplicateCollidersButton.sprites[i].params.corners_rounding[0].radius = 8;
+			duplicateCollidersButton.sprites[i].params.corners_rounding[1].radius = 8;
+			duplicateCollidersButton.sprites[i].params.corners_rounding[2].radius = 8;
+			duplicateCollidersButton.sprites[i].params.corners_rounding[3].radius = 8;
+
 			editor->aboutWindow.sprites[i].params.enableCornerRounding();
 			editor->aboutWindow.sprites[i].params.corners_rounding[0].radius = 10;
 			editor->aboutWindow.sprites[i].params.corners_rounding[1].radius = 10;
@@ -703,6 +715,12 @@ void GeneralWindow::Create(EditorComponent* _editor)
 			editor->componentsWnd.metadataWnd.addCombo.sprites[i].params.corners_rounding[1].radius = 10;
 			editor->componentsWnd.metadataWnd.addCombo.sprites[i].params.corners_rounding[2].radius = 10;
 			editor->componentsWnd.metadataWnd.addCombo.sprites[i].params.corners_rounding[3].radius = 10;
+
+			editor->componentsWnd.splineWnd.addButton.sprites[i].params.enableCornerRounding();
+			editor->componentsWnd.splineWnd.addButton.sprites[i].params.corners_rounding[0].radius = 10;
+			editor->componentsWnd.splineWnd.addButton.sprites[i].params.corners_rounding[1].radius = 10;
+			editor->componentsWnd.splineWnd.addButton.sprites[i].params.corners_rounding[2].radius = 10;
+			editor->componentsWnd.splineWnd.addButton.sprites[i].params.corners_rounding[3].radius = 10;
 		}
 		editor->componentsWnd.weatherWnd.default_sky_horizon = dark_point;
 		editor->componentsWnd.weatherWnd.default_sky_zenith = theme_color_idle;
@@ -727,6 +745,23 @@ void GeneralWindow::Create(EditorComponent* _editor)
 				sprite.params.enableCornerRounding();
 				sprite.params.corners_rounding[0].radius = 10;
 				sprite.params.corners_rounding[2].radius = 10;
+			}
+		}
+
+		for (auto& x : editor->componentsWnd.splineWnd.entries)
+		{
+			x.removeButton.SetColor(wi::Color::Error(), wi::gui::WIDGETSTATE::FOCUS);
+			for (auto& sprite : x.removeButton.sprites)
+			{
+				sprite.params.enableCornerRounding();
+				sprite.params.corners_rounding[0].radius = 10;
+				sprite.params.corners_rounding[2].radius = 10;
+			}
+			for (auto& sprite : x.entityButton.sprites)
+			{
+				sprite.params.enableCornerRounding();
+				sprite.params.corners_rounding[1].radius = 10;
+				sprite.params.corners_rounding[3].radius = 10;
 			}
 		}
 
@@ -936,6 +971,17 @@ void GeneralWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&ktxConvButton);
 
+
+	duplicateCollidersButton.Create("Delete duplicate colliders");
+	duplicateCollidersButton.SetTooltip("Duplicate colliders will be removed from the scene.");
+	duplicateCollidersButton.SetSize(XMFLOAT2(100, 18));
+	duplicateCollidersButton.OnClick([=](wi::gui::EventArgs args) {
+		Scene& scene = editor->GetCurrentScene();
+		scene.DeleteDuplicateColliders();
+		editor->componentsWnd.RefreshEntityTree();
+	});
+	AddWidget(&duplicateCollidersButton);
+
 	SetVisible(false);
 }
 
@@ -1041,6 +1087,7 @@ void GeneralWindow::ResizeLayout()
 	add_right(cameraVisCheckBox);
 	add_right(colliderVisCheckBox);
 	add_right(springVisCheckBox);
+	add_right(splineVisCheckBox);
 
 	y += jump;
 
@@ -1066,4 +1113,5 @@ void GeneralWindow::ResizeLayout()
 	add_fullwidth(eliminateCoarseCascadesButton);
 	add_fullwidth(ddsConvButton);
 	add_fullwidth(ktxConvButton);
+	add_fullwidth(duplicateCollidersButton);
 }

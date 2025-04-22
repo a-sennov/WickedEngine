@@ -1,9 +1,12 @@
 #include "wiInitializer.h"
 #include "WickedEngine.h"
 
-#include <string>
 #include <thread>
 #include <atomic>
+
+#if defined(PLATFORM_WINDOWS_DESKTOP) || defined(PLATFORM_LINUX)
+#include "Utility/cpuinfo.hpp"
+#endif // defined(PLATFORM_WINDOWS_DESKTOP) || defined(PLATFORM_LINUX)
 
 namespace wi::initializer
 {
@@ -40,16 +43,85 @@ namespace wi::initializer
 		static constexpr const char* platform_string = "Xbox";
 #endif // PLATFORM
 
-		wilog("\n[wi::initializer] Initializing Wicked Engine, please wait...\nVersion: %s\nPlatform: %s", wi::version::GetVersionString(), platform_string)
-		
+		wilog("\n[wi::initializer] Initializing Wicked Engine, please wait...\nVersion: %s\nPlatform: %s", wi::version::GetVersionString(), platform_string);
+
+		StackString<1024> cpustring;
+#if defined(PLATFORM_WINDOWS_DESKTOP) || defined(PLATFORM_LINUX)
+		CPUInfo cpuinfo;
+		cpustring.push_back("\nCPU: ");
+		cpustring.push_back(cpuinfo.model().c_str());
+		cpustring.push_back("\n\tFeatures available: ");
+		if (cpuinfo.haveSSE())
+		{
+			cpustring.push_back("SSE; ");
+		}
+		if (cpuinfo.haveSSE2())
+		{
+			cpustring.push_back("SSE 2; ");
+		}
+		if (cpuinfo.haveSSE3())
+		{
+			cpustring.push_back("SSE 3; ");
+		}
+		if (cpuinfo.haveSSE41())
+		{
+			cpustring.push_back("SSE 4.1; ");
+		}
+		if (cpuinfo.haveSSE42())
+		{
+			cpustring.push_back("SSE 4.2; ");
+		}
+		if (cpuinfo.haveAVX())
+		{
+			cpustring.push_back("AVX; ");
+		}
+		if (cpuinfo.haveAVX2())
+		{
+			cpustring.push_back("AVX 2; ");
+		}
+		if (cpuinfo.haveAVX512F())
+		{
+			cpustring.push_back("AVX 512; ");
+		}
+#endif // defined(PLATFORM_WINDOWS_DESKTOP) || defined(PLATFORM_LINUX)
+		cpustring.push_back("\n\tFeatures used: ");
+#ifdef _XM_SSE_INTRINSICS_
+		cpustring.push_back("SSE; ");
+		cpustring.push_back("SSE 2; ");
+#endif // _XM_SSE_INTRINSICS_
+#ifdef _XM_SSE3_INTRINSICS_
+		cpustring.push_back("SSE 3; ");
+#endif // _XM_SSE3_INTRINSICS_
+#ifdef _XM_SSE4_INTRINSICS_
+		cpustring.push_back("SSE 4.1; ");
+#endif // _XM_SSE4_INTRINSICS_
+#ifdef _XM_AVX_INTRINSICS_
+		cpustring.push_back("AVX; ");
+#endif // _XM_AVX_INTRINSICS_
+#ifdef _XM_AVX2_INTRINSICS_
+		cpustring.push_back("AVX 2; ");
+#endif // _XM_AVX2_INTRINSICS_
+#ifdef _XM_ARM_NEON_INTRINSICS_
+		cpustring.push_back("NEON; ");
+#endif // _XM_ARM_NEON_INTRINSICS_
+
+		wi::backlog::post(cpustring.c_str());
+
+		if (!XMVerifyCPUSupport())
+		{
+			wilog_messagebox("XMVerifyCPUSupport() failed! This means that your CPU doesn't support a required feature! %s", cpustring.c_str());
+		}
+
+		wilog("\nRAM: %s", wi::helper::GetMemorySizeText(wi::helper::GetMemoryUsage().total_physical).c_str());
+
 		size_t shaderdump_count = wi::renderer::GetShaderDumpCount();
 		if (shaderdump_count > 0)
 		{
-			wi::backlog::post("\nEmbedded shaders found: " + std::to_string(shaderdump_count));
+			wilog("\nEmbedded shaders found: %d", (int)shaderdump_count);
 		}
 		else
 		{
-			wi::backlog::post("\nNo embedded shaders found, shaders will be compiled at runtime if needed.\n\tShader source path: " + wi::renderer::GetShaderSourcePath() + "\n\tShader binary path: " + wi::renderer::GetShaderPath());
+			wilog("\nNo embedded shaders found, shaders will be compiled at runtime if needed.\n\tShader source path: %s\n\tShader binary path: %s", wi::renderer::GetShaderSourcePath().c_str(), wi::renderer::GetShaderPath().c_str());
 		}
 
 		wi::backlog::post("");
